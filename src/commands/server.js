@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const fetch = require('node-fetch');
 
 function toISTString(date) {
   return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour12: true, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
@@ -24,6 +25,16 @@ function writeGuildConfig(guildId, data) {
   fs.writeFileSync(p, JSON.stringify(data, null, 2));
 }
 
+async function safeReply(interaction, payload) {
+  try {
+    if (interaction.deferred) return await interaction.editReply(payload);
+    if (interaction.replied) return await interaction.followUp(payload);
+    return await interaction.reply(payload);
+  } catch (err) {
+    console.error('safeReply failed:', err);
+  }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('server')
@@ -44,7 +55,6 @@ module.exports = {
       const owner = await g.fetchOwner();
       const boosts = g.premiumSubscriptionCount || 0;
       const created = toISTString(g.createdAt);
-      const joined = toISTString((await g.members.fetch(interaction.user.id)).joinedAt || new Date());
       const embed = new EmbedBuilder()
         .setTitle(`${g.name} — Server Info`)
         .setThumbnail(g.iconURL({ size: 512 }))
@@ -56,13 +66,13 @@ module.exports = {
           { name: 'Created', value: created, inline: true }
         ).setColor(0x2b2d31);
 
-      await interaction.reply({ embeds: [embed] });
+      await safeReply(interaction, { embeds: [embed] });
       return;
     }
 
     if (sub === 'edit') {
       if (!interaction.member.permissions.has('ManageGuild')) {
-        await interaction.reply({ content: 'You need Manage Server permission to edit server.', ephemeral: true });
+        await safeReply(interaction, { content: 'You need Manage Server permission to edit server.', ephemeral: true });
         return;
       }
       const name = interaction.options.getString('name');
@@ -71,29 +81,27 @@ module.exports = {
       const tz = interaction.options.getString('timezone');
       const lang = interaction.options.getString('language');
 
-      const before = { name: interaction.guild.name, description: interaction.guild.description || '' };
-      let applied = [];
       try {
         await interaction.guild.edit({ name: name || undefined, description: desc || undefined });
-        applied.push('name/description');
         if (iconUrl) {
-          const res = await fetch(iconUrl).then(r => r.arrayBuffer()).then(b => Buffer.from(b));
-          await interaction.guild.setIcon(res);
-          applied.push('icon');
+          const res = await fetch(iconUrl);
+          if (!res.ok) throw new Error('Failed to fetch icon URL');
+          const arr = await res.arrayBuffer();
+          const buf = Buffer.from(arr);
+          await interaction.guild.setIcon(buf);
         }
       } catch (err) {
-        await interaction.reply({ content: 'Failed to edit server: ' + (err.message || err), ephemeral: true });
+        await safeReply(interaction, { content: 'Failed to edit server: ' + (err.message || err), ephemeral: true });
         return;
       }
 
-      // store config in data/guilds
       const cfg = readGuildConfig(interaction.guild.id);
       if (tz) cfg.timezone = tz;
       if (lang) cfg.language = lang;
       writeGuildConfig(interaction.guild.id, cfg);
 
-      const embed = new EmbedBuilder().setTitle('Server Updated').setDescription(`Applied: ${applied.join(', ')}`).setColor(0x00AA00);
-      await interaction.reply({ embeds: [embed] });
+      const embed = new EmbedBuilder().setTitle('Server Updated').setDescription('Server updated successfully.').setColor(0x00AA00);
+      await safeReply(interaction, { embeds: [embed] });
       return;
     }
   }
