@@ -1,13 +1,12 @@
 {
-  "name": "yushen's utility",
+  "name": "yushens-utility",
   "version": "0.1.0",
   "private": true,
   "description": "utility bot",
   "main": "src/index.js",
   "scripts": {
-  "start": "node src/index.js",
-  "register-commands": "node deploy-commands.js"
-}
+    "start": "node src/index.js",
+    "register-commands": "node deploy-commands.js"
   },
   "dependencies": {
     "discord.js": "^14.11.0",
@@ -17,3 +16,4 @@
   "devDependencies": {
     "nodemon": "^2.0.22"
   }
+}
