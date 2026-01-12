@@ -5,9 +5,9 @@
   "description": "utility bot",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon --watch src --exec node src/index.js",
-    "register-commands": "node src/register-commands.js"
+  "start": "node src/index.js",
+  "register-commands": "node deploy-commands.js"
+}
   },
   "dependencies": {
     "discord.js": "^14.11.0",
