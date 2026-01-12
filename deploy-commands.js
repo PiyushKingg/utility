@@ -26,6 +26,7 @@ async function registerCommands() {
   for (const file of commandFiles) {
     const fp = path.join(commandsDir, file);
     try {
+      delete require.cache[require.resolve(fp)]; // ensure fresh load
       const cmd = require(fp);
       if (cmd && cmd.data && typeof cmd.data.toJSON === 'function') {
         commands.push(cmd.data.toJSON());
@@ -61,13 +62,19 @@ async function registerCommands() {
   return { registered: commands.length, guild: GUILD_ID };
 }
 
-// If run directly, execute and exit.
+// support being required as module
+module.exports = { registerCommands };
+
+// If run directly, register and exit
 if (require.main === module) {
-  registerCommands()
-    .then(res => {
+  (async () => {
+    try {
+      const res = await registerCommands();
       console.log('Done:', res);
       process.exit(0);
-    })
-    .catch(err => {
+    } catch (err) {
       console.error('Failed to register commands:', err);
-  
+      process.exit(1);
+    }
+  })();
+}
