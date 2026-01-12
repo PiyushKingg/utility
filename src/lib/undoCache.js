@@ -1,27 +1,24 @@
+// src/lib/undoCache.js
 const { v4: uuidv4 } = require('uuid');
+const cache = new Map(); // actionId -> { guildId, beforeState, applyUndoFn, expiresAt }
 
-const cache = new Map();
-
-function storeUndo(guildId, beforeState, ttlSeconds = 40) {
-  const actionId = uuidv4();
+function storeUndo(guildId, beforeState, applyUndoFn, ttlSeconds = 45) {
+  const id = uuidv4();
   const expiresAt = Date.now() + ttlSeconds * 1000;
-  cache.set(actionId, { guildId, beforeState, expiresAt });
-  setTimeout(() => cache.delete(actionId), ttlSeconds * 1000 + 1000);
-  return actionId;
+  cache.set(id, { guildId, beforeState, applyUndoFn, expiresAt });
+  setTimeout(() => cache.delete(id), ttlSeconds * 1000 + 2000);
+  return id;
 }
 
-function getUndo(actionId) {
-  const data = cache.get(actionId);
+function consumeUndo(id) {
+  const data = cache.get(id);
   if (!data) return null;
-  if (Date.now() > data.expiresAt) { cache.delete(actionId); return null; }
+  if (Date.now() > data.expiresAt) {
+    cache.delete(id);
+    return null;
+  }
+  cache.delete(id);
   return data;
 }
 
-function consumeUndo(actionId) {
-  const data = getUndo(actionId);
-  if (!data) return null;
-  cache.delete(actionId);
-  return data;
-}
-
-module.exports = { storeUndo, getUndo, consumeUndo };
+module.exports = { storeUndo, consumeUndo };
