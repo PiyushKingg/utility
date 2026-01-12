@@ -11,36 +11,20 @@ async function safeReply(interaction, payload) {
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('role')
-    .setDescription('Role utilities')
-    .addSubcommand(sub => sub.setName('perms').setDescription('Interactive role permission editor'))
-    .addSubcommand(sub => sub.setName('info').setDescription('Show role info').addRoleOption(opt => opt.setName('role').setDescription('Role to inspect'))),
+    .setName('roleperms')
+    .setDescription('Interactive role permission editor'),
 
   async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
-    if (sub === 'perms') {
-      const embed = new EmbedBuilder().setTitle('Role Permission Editor').setDescription('Open the editor to add/remove/reset/show role permissions.').setColor(0x2b2d31);
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('rolep:init').setLabel('Open Editor').setStyle(ButtonStyle.Primary)
-      );
-      await safeReply(interaction, { embeds: [embed], components: [row] });
-      return;
-    }
+    const embed = new EmbedBuilder()
+      .setTitle('Role Permission Editor')
+      .setDescription('Choose an action to edit role permissions. (All messages are public embeds.)')
+      .setColor(0x2b2d31);
 
-    if (sub === 'info') {
-      const role = interaction.options.getRole('role') || interaction.guild.roles.everyone;
-      const members = role.members.map(m => `${m.user.tag}`).slice(0, 30).join('\n') || 'No members';
-      const embed = new EmbedBuilder()
-        .setTitle(`Role Info — ${role.name}`)
-        .addFields(
-          { name: 'ID', value: role.id, inline: true },
-          { name: 'Members (sample)', value: members, inline: false },
-          { name: 'Hoisted', value: role.hoist ? 'Yes' : 'No', inline: true },
-          { name: 'Mentionable', value: role.mentionable ? 'Yes' : 'No', inline: true }
-        )
-        .setColor(role.color || 0x2b2d31);
-      await safeReply(interaction, { embeds: [embed] });
-      return;
-    }
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('rolep:init').setLabel('Open Editor').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+    );
+
+    await safeReply(interaction, { embeds: [embed], components: [row] });
   }
 };
