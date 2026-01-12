@@ -1,20 +1,26 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+// src/commands/channelPerms.js
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ChannelSelectMenuBuilder } = require('discord.js');
+
+async function safeReply(interaction, payload) {
+  try {
+    if (interaction.deferred) return await interaction.editReply(payload);
+    if (interaction.replied) return await interaction.followUp(payload);
+    return await interaction.reply(payload);
+  } catch (err) { console.error('safeReply failed:', err); }
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('channel')
-    .setDescription('Channel utilities')
-    .addSubcommand(sub => sub.setName('perms').setDescription('Interactive channel permission editor')),
+    .setName('channelperms')
+    .setDescription('Interactive channel permission editor'),
 
   async execute(interaction) {
-    if (interaction.options.getSubcommand() === 'perms') {
-      const embed = new EmbedBuilder()
-        .setTitle('Channel Permission Editor')
-        .setDescription('Start the interactive channel permission flow. Use the slash command or follow prompts to select a channel then manage overwrites.')
-        .setColor(0x2b2d31);
+    const embed = new EmbedBuilder().setTitle('Channel Permission Editor').setDescription('Select a channel to configure overwrites.').setColor(0x2b2d31);
 
-      // interactive components are handled in handler; this reply acts as entry point
-      await interaction.reply({ embeds: [embed], ephemeral: true });
-    }
+    const row = new ActionRowBuilder().addComponents(
+      new ChannelSelectMenuBuilder().setCustomId('chanp:select_channel').setPlaceholder('Select channel to configure')
+    );
+
+    await safeReply(interaction, { embeds: [embed], components: [row] });
   }
 };
