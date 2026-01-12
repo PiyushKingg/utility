@@ -1,32 +1,95 @@
 const { PermissionsBitField } = require('discord.js');
 
+const PERMS_MAP = {
+  CreateInstantInvite: PermissionsBitField.Flags.CreateInstantInvite,
+  KickMembers: PermissionsBitField.Flags.KickMembers,
+  BanMembers: PermissionsBitField.Flags.BanMembers,
+  Administrator: PermissionsBitField.Flags.Administrator,
+  ManageChannels: PermissionsBitField.Flags.ManageChannels,
+  ManageGuild: PermissionsBitField.Flags.ManageGuild,
+  AddReactions: PermissionsBitField.Flags.AddReactions,
+  ViewAuditLog: PermissionsBitField.Flags.ViewAuditLog,
+  PrioritySpeaker: PermissionsBitField.Flags.PrioritySpeaker,
+  Stream: PermissionsBitField.Flags.Stream,
+  ViewChannel: PermissionsBitField.Flags.ViewChannel,
+  SendMessages: PermissionsBitField.Flags.SendMessages,
+  SendTTSMessages: PermissionsBitField.Flags.SendTTSMessages,
+  ManageMessages: PermissionsBitField.Flags.ManageMessages,
+  EmbedLinks: PermissionsBitField.Flags.EmbedLinks,
+  AttachFiles: PermissionsBitField.Flags.AttachFiles,
+  ReadMessageHistory: PermissionsBitField.Flags.ReadMessageHistory,
+  MentionEveryone: PermissionsBitField.Flags.MentionEveryone,
+  UseExternalEmojis: PermissionsBitField.Flags.UseExternalEmojis,
+  ViewGuildInsights: PermissionsBitField.Flags.ViewGuildInsights,
+  Connect: PermissionsBitField.Flags.Connect,
+  Speak: PermissionsBitField.Flags.Speak,
+  MuteMembers: PermissionsBitField.Flags.MuteMembers,
+  DeafenMembers: PermissionsBitField.Flags.DeafenMembers,
+  MoveMembers: PermissionsBitField.Flags.MoveMembers,
+  UseVAD: PermissionsBitField.Flags.UseVAD,
+  ChangeNickname: PermissionsBitField.Flags.ChangeNickname,
+  ManageNicknames: PermissionsBitField.Flags.ManageNicknames,
+  ManageRoles: PermissionsBitField.Flags.ManageRoles,
+  ManageWebhooks: PermissionsBitField.Flags.ManageWebhooks,
+  ManageEmojisAndStickers: PermissionsBitField.Flags.ManageEmojisAndStickers,
+  UseApplicationCommands: PermissionsBitField.Flags.UseApplicationCommands,
+  RequestToSpeak: PermissionsBitField.Flags.RequestToSpeak,
+  ManageEvents: PermissionsBitField.Flags.ManageEvents,
+  ManageThreads: PermissionsBitField.Flags.ManageThreads,
+  CreatePublicThreads: PermissionsBitField.Flags.CreatePublicThreads,
+  CreatePrivateThreads: PermissionsBitField.Flags.CreatePrivateThreads,
+  UseExternalStickers: PermissionsBitField.Flags.UseExternalStickers,
+  SendMessagesInThreads: PermissionsBitField.Flags.SendMessagesInThreads,
+  StartEmbeddedActivities: PermissionsBitField.Flags.StartEmbeddedActivities, // if available
+  ModerateMembers: PermissionsBitField.Flags.ModerateMembers,
+  // Add any additional permission flags here if a new discord.js version introduces them
+};
+
+// Human-friendly options for select menus (label -> key)
 const PERM_OPTIONS = [
-  { label: 'Administrator', value: 'Administrator' },
-  { label: 'Manage Roles', value: 'ManageRoles' },
-  { label: 'Manage Channels', value: 'ManageChannels' },
   { label: 'View Channels', value: 'ViewChannel' },
+  { label: 'Manage Channels', value: 'ManageChannels' },
+  { label: 'Manage Roles', value: 'ManageRoles' },
+  { label: 'Create Instant Invite', value: 'CreateInstantInvite' },
+  { label: 'Manage Server (Guild)', value: 'ManageGuild' },
+  { label: 'Kick Members', value: 'KickMembers' },
+  { label: 'Ban Members', value: 'BanMembers' },
+  { label: 'Administrator', value: 'Administrator' },
+  { label: 'Add Reactions', value: 'AddReactions' },
+  { label: 'View Audit Log', value: 'ViewAuditLog' },
+  { label: 'Priority Speaker', value: 'PrioritySpeaker' },
   { label: 'Send Messages', value: 'SendMessages' },
+  { label: 'Send TTS Messages', value: 'SendTTSMessages' },
+  { label: 'Manage Messages', value: 'ManageMessages' },
   { label: 'Embed Links', value: 'EmbedLinks' },
   { label: 'Attach Files', value: 'AttachFiles' },
   { label: 'Read Message History', value: 'ReadMessageHistory' },
+  { label: 'Mention Everyone (@everyone)', value: 'MentionEveryone' },
+  { label: 'Use External Emojis', value: 'UseExternalEmojis' },
+  { label: 'View Server Insights', value: 'ViewGuildInsights' },
   { label: 'Connect (Voice)', value: 'Connect' },
-  { label: 'Speak (Voice)', value: 'Speak' }
+  { label: 'Speak (Voice)', value: 'Speak' },
+  { label: 'Mute Members', value: 'MuteMembers' },
+  { label: 'Deafen Members', value: 'DeafenMembers' },
+  { label: 'Move Members', value: 'MoveMembers' },
+  { label: 'Use Voice Activity', value: 'UseVAD' },
+  { label: 'Change Nickname', value: 'ChangeNickname' },
+  { label: 'Manage Nicknames', value: 'ManageNicknames' },
+  { label: 'Manage Webhooks', value: 'ManageWebhooks' },
+  { label: 'Manage Emojis & Stickers', value: 'ManageEmojisAndStickers' },
+  { label: 'Use Application Commands', value: 'UseApplicationCommands' },
+  { label: 'Request To Speak', value: 'RequestToSpeak' },
+  { label: 'Manage Events', value: 'ManageEvents' },
+  { label: 'Manage Threads', value: 'ManageThreads' },
+  { label: 'Create Public Threads', value: 'CreatePublicThreads' },
+  { label: 'Create Private Threads', value: 'CreatePrivateThreads' },
+  { label: 'Use External Stickers', value: 'UseExternalStickers' },
+  { label: 'Send Messages in Threads', value: 'SendMessagesInThreads' },
+  { label: 'Moderate Members (Timeout)', value: 'ModerateMembers' },
 ];
 
-function permissionNameToFlag(name) {
-  switch (name) {
-    case 'Administrator': return PermissionsBitField.Flags.Administrator;
-    case 'ManageRoles': return PermissionsBitField.Flags.ManageRoles;
-    case 'ManageChannels': return PermissionsBitField.Flags.ManageChannels;
-    case 'ViewChannel': return PermissionsBitField.Flags.ViewChannel;
-    case 'SendMessages': return PermissionsBitField.Flags.SendMessages;
-    case 'EmbedLinks': return PermissionsBitField.Flags.EmbedLinks;
-    case 'AttachFiles': return PermissionsBitField.Flags.AttachFiles;
-    case 'ReadMessageHistory': return PermissionsBitField.Flags.ReadMessageHistory;
-    case 'Connect': return PermissionsBitField.Flags.Connect;
-    case 'Speak': return PermissionsBitField.Flags.Speak;
-    default: return 0n;
-  }
+function nameToFlag(name) {
+  return PERMS_MAP[name] ?? 0n;
 }
 
-module.exports = { PERM_OPTIONS, permissionNameToFlag };
+module.exports = { PERMS_MAP, PERM_OPTIONS, nameToFlag };
