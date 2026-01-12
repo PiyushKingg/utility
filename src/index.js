@@ -18,7 +18,7 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// Load all commands from src/commands
+// Load command modules from src/commands
 const commandsPath = path.join(__dirname, 'commands');
 if (!fs.existsSync(commandsPath)) {
   console.warn(`Warning: commands folder not found at ${commandsPath}`);
@@ -26,6 +26,7 @@ if (!fs.existsSync(commandsPath)) {
   for (const file of fs.readdirSync(commandsPath)) {
     if (!file.endsWith('.js')) continue;
     try {
+      delete require.cache[require.resolve(path.join(commandsPath, file))];
       const cmd = require(path.join(commandsPath, file));
       if (cmd && cmd.data && cmd.execute) {
         client.commands.set(cmd.data.name, cmd);
@@ -39,38 +40,44 @@ if (!fs.existsSync(commandsPath)) {
   }
 }
 
-// READY handling (v14/v15 compatibility)
+// READY handling (run once)
 let _readyHandled = false;
 async function handleReady() {
   if (_readyHandled) return;
   _readyHandled = true;
+
   console.log(`✅ Logged in as ${client.user.tag}`);
 
-  // Auto-register slash commands on startup if GUILD_ID present.
-  // This allows Render free (no shell) to register commands automatically.
+  // Auto-register commands on startup if GUILD_ID present.
+  // This makes Render free work without shell access.
   try {
-    const { registerCommands } = require('../deploy-commands'); // root deploy script
-    const GUILD_ID = process.env.GUILD_ID;
-    if (GUILD_ID) {
-      console.log('GUILD_ID detected — attempting to register slash commands automatically at startup.');
-      try {
-        const result = await registerCommands();
-        console.log('Auto-register result:', result);
-      } catch (err) {
-        console.warn('Auto-register failed (will not crash):', err.message || err);
+    const deployPath = path.join(__dirname, '..', 'deploy-commands.js');
+    if (fs.existsSync(deployPath)) {
+      const { registerCommands } = require(deployPath);
+      const GUILD_ID = process.env.GUILD_ID;
+      if (GUILD_ID) {
+        console.log('GUILD_ID detected — attempting to register slash commands automatically at startup.');
+        try {
+          const result = await registerCommands();
+          console.log('Auto-register result:', result);
+        } catch (err) {
+          console.warn('Auto-register failed (will not crash):', err.message || err);
+        }
+      } else {
+        console.log('No GUILD_ID provided — skipping automatic registration. Provide GUILD_ID to register to a test guild on startup.');
       }
     } else {
-      console.log('No GUILD_ID provided — skipping automatic registration. Provide GUILD_ID to register to a test guild on startup.');
+      console.log('deploy-commands.js not found at project root — auto-registration skipped.');
     }
   } catch (err) {
-    console.warn('No deploy-commands module found or failed to load. If you want auto-registration, ensure deploy-commands.js exists at project root.');
+    console.warn('Auto-registration path failed:', err.message || err);
   }
 
-  console.log('Tip: If automatic registration fails, you can run `node deploy-commands.js` locally or in a shell to register commands to a guild.');
+  console.log('Tip: if auto-registration fails repeatedly, check DISCORD_TOKEN and GUILD_ID in service variables.');
 }
 
 client.once('ready', handleReady);
-client.once('clientReady', handleReady); // future-proofing for discord.js v15 rename
+client.once('clientReady', handleReady); // future-proofing
 
 // Interaction handling
 client.on('interactionCreate', async (interaction) => {
@@ -85,7 +92,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // For buttons/selects/modals - forward to handler if exists
+    // Buttons/selects/modals: forward to handler if exists
     if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isRoleSelectMenu() || interaction.isModalSubmit()) {
       const handlerPath = path.join(__dirname, 'handlers', 'interactionCreate.js');
       if (fs.existsSync(handlerPath)) {
@@ -105,7 +112,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// Global error handlers for better logs on Render
+// Global error handlers
 process.on('unhandledRejection', (reason, p) => {
   console.error('Unhandled Rejection at:', p, 'reason:', reason);
 });
