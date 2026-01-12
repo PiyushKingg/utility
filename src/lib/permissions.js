@@ -1,5 +1,7 @@
+// src/lib/permissions.js
 const { PermissionsBitField } = require('discord.js');
 
+// Exhaustive-ish mapping of permission keys to PermissionsBitField flags.
 const PERMS_MAP = {
   CreateInstantInvite: PermissionsBitField.Flags.CreateInstantInvite,
   KickMembers: PermissionsBitField.Flags.KickMembers,
@@ -40,9 +42,8 @@ const PERMS_MAP = {
   CreatePrivateThreads: PermissionsBitField.Flags.CreatePrivateThreads,
   UseExternalStickers: PermissionsBitField.Flags.UseExternalStickers,
   SendMessagesInThreads: PermissionsBitField.Flags.SendMessagesInThreads,
-  StartEmbeddedActivities: PermissionsBitField.Flags.StartEmbeddedActivities, // if available
-  ModerateMembers: PermissionsBitField.Flags.ModerateMembers,
-  // Add any additional permission flags here if a new discord.js version introduces them
+  StartEmbeddedActivities: PermissionsBitField.Flags.StartEmbeddedActivities ?? 0n,
+  ModerateMembers: PermissionsBitField.Flags.ModerateMembers
 };
 
 // Human-friendly options for select menus (label -> key)
@@ -85,7 +86,7 @@ const PERM_OPTIONS = [
   { label: 'Create Private Threads', value: 'CreatePrivateThreads' },
   { label: 'Use External Stickers', value: 'UseExternalStickers' },
   { label: 'Send Messages in Threads', value: 'SendMessagesInThreads' },
-  { label: 'Moderate Members (Timeout)', value: 'ModerateMembers' },
+  { label: 'Moderate Members (Timeout)', value: 'ModerateMembers' }
 ];
 
 function nameToFlag(name) {
