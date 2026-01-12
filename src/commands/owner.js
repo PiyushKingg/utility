@@ -1,6 +1,14 @@
 // src/commands/owner.js
 const { SlashCommandBuilder } = require('discord.js');
 
+async function safeReply(interaction, payload) {
+  try {
+    if (interaction.deferred) return await interaction.editReply(payload);
+    if (interaction.replied) return await interaction.followUp(payload);
+    return await interaction.reply(payload);
+  } catch (err) { console.error('safeReply failed:', err); }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('owner')
@@ -10,12 +18,11 @@ module.exports = {
   async execute(interaction) {
     const sub = interaction.options.getSubcommand();
     const ownerId = process.env.OWNER_ID;
-    if (!ownerId) return interaction.reply({ content: 'OWNER_ID not configured.', ephemeral: true });
-    if (interaction.user.id !== ownerId) return interaction.reply({ content: 'Only bot owner can run this.', ephemeral: true });
+    if (!ownerId) return safeReply(interaction, { content: 'OWNER_ID not configured.', ephemeral: true });
+    if (interaction.user.id !== ownerId) return safeReply(interaction, { content: 'Only bot owner can run this.', ephemeral: true });
 
     if (sub === 'restart') {
-      await interaction.reply({ content: 'Restarting...' });
-      // allow the message to send, then exit process
+      await safeReply(interaction, { content: 'Restarting...' });
       setTimeout(() => process.exit(0), 1000);
     }
   }
