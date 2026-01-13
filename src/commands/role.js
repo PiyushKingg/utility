@@ -1,137 +1,27 @@
 // src/commands/role.js
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-
-async function safeReply(interaction, payload) {
-  // robust: handle both chat commands and component responses safely
-  try {
-    if (!interaction.deferred && !interaction.replied) {
-      return await interaction.reply(payload);
-    }
-    if (interaction.deferred) {
-      return await interaction.editReply(payload);
-    }
-    if (interaction.replied) {
-      return await interaction.followUp(payload);
-    }
-  } catch (err) {
-    // fallback: if already acknowledged, try editReply then followUp
-    try { if (interaction.deferred || interaction.replied) return await interaction.editReply(payload); } catch {}
-    try { return await interaction.followUp(payload); } catch (e) { console.error('safeReply final fallback failed:', err, e); }
-  }
-  return null;
-}
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('role')
-    .setDescription('Role management and permissions')
-    .addSubcommand(s => s.setName('perms').setDescription('Open the interactive role permission editor'))
-    .addSubcommand(s => s.setName('create').setDescription('Create a role')
-      .addStringOption(o => o.setName('name').setDescription('Role name').setRequired(true))
-      .addStringOption(o => o.setName('color').setDescription('Hex color (e.g. #ff0000)').setRequired(false))
-      .addBooleanOption(o => o.setName('hoist').setDescription('Hoist role').setRequired(false))
-      .addBooleanOption(o => o.setName('mentionable').setDescription('Make role mentionable').setRequired(false))
-    )
-    .addSubcommand(s => s.setName('delete').setDescription('Delete a role').addRoleOption(o => o.setName('role').setDescription('Role to delete').setRequired(true)))
-    .addSubcommand(s => s.setName('assign').setDescription('Assign a role to a member').addRoleOption(o => o.setName('role').setDescription('Role').setRequired(true)).addUserOption(u => u.setName('user').setDescription('Member').setRequired(true)))
-    .addSubcommand(s => s.setName('remove').setDescription('Remove a role from a member').addRoleOption(o => o.setName('role').setDescription('Role').setRequired(true)).addUserOption(u => u.setName('user').setDescription('Member').setRequired(true)))
-    .addSubcommand(s => s.setName('clone').setDescription('Clone a role').addRoleOption(o => o.setName('role').setDescription('Role to clone').setRequired(true)).addStringOption(o => o.setName('name').setDescription('New name').setRequired(false)))
-    .addSubcommand(s => s.setName('info').setDescription('Show role information').addRoleOption(o => o.setName('role').setDescription('Role to inspect').setRequired(true)))
-    .addSubcommand(s => s.setName('bulkassign').setDescription('Bulk-assign a role by filter (hasRole:NAME)').addRoleOption(o => o.setName('role').setDescription('Role to assign').setRequired(true)).addStringOption(o => o.setName('filter').setDescription('Filter (e.g., hasRole:member)').setRequired(true))),
+    .setDescription('Role-related utilities (editor, info)'),
   async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
-
-    if (sub === 'perms') {
-      const embed = new EmbedBuilder().setTitle('Role Permissions').setDescription('Open the interactive permission editor').setColor(0x2b2d31);
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('rolep:init').setLabel('Open Editor').setStyle(ButtonStyle.Primary));
-      return safeReply(interaction, { embeds: [embed], components: [row] });
-    }
-
-    if (sub !== 'info' && !interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
-      return safeReply(interaction, { content: 'You need Manage Roles permission to use this subcommand.', ephemeral: true });
-    }
-
     try {
-      if (sub === 'create') {
-        const name = interaction.options.getString('name');
-        const color = interaction.options.getString('color') || undefined;
-        const hoist = interaction.options.getBoolean('hoist') || false;
-        const mentionable = interaction.options.getBoolean('mentionable') || false;
-        const role = await interaction.guild.roles.create({ name, color, hoist, mentionable });
-        const embed = new EmbedBuilder().setTitle('Role Created').setDescription(`✅ ${role}`).setColor(role.color || 0x2b2d31);
-        return safeReply(interaction, { embeds: [embed] });
-      }
-
-      if (sub === 'delete') {
-        const role = interaction.options.getRole('role');
-        await role.delete('Deleted via command');
-        return safeReply(interaction, { content: `Deleted role ${role.name}` });
-      }
-
-      if (sub === 'assign') {
-        const role = interaction.options.getRole('role');
-        const user = interaction.options.getUser('user');
-        const member = await interaction.guild.members.fetch(user.id);
-        await member.roles.add(role);
-        return safeReply(interaction, { content: `Assigned ${role} to ${member.user.tag}` });
-      }
-
-      if (sub === 'remove') {
-        const role = interaction.options.getRole('role');
-        const user = interaction.options.getUser('user');
-        const member = await interaction.guild.members.fetch(user.id);
-        await member.roles.remove(role);
-        return safeReply(interaction, { content: `Removed ${role} from ${member.user.tag}` });
-      }
-
-      if (sub === 'clone') {
-        const role = interaction.options.getRole('role');
-        const newName = interaction.options.getString('name') || `${role.name}-clone`;
-        const clone = await interaction.guild.roles.create({ name: newName, color: role.color, hoist: role.hoist, mentionable: role.mentionable, permissions: role.permissions });
-        return safeReply(interaction, { content: `Cloned role as ${clone}` });
-      }
-
-      if (sub === 'info') {
-        const role = interaction.options.getRole('role');
-        const members = role.members.map(m => m.user.tag).slice(0, 30);
-        const embed = new EmbedBuilder()
-          .setTitle(`${role.name} — Role Info`)
-          .setColor(role.color || 0x2b2d31)
-          .addFields(
-            { name: 'ID', value: role.id, inline: true },
-            { name: 'Color', value: role.hexColor || '—', inline: true },
-            { name: 'Position', value: `${role.position}`, inline: true },
-            { name: 'Hoisted', value: role.hoist ? 'Yes' : 'No', inline: true },
-            { name: 'Mentionable', value: role.mentionable ? 'Yes' : 'No', inline: true },
-            { name: `Members (${members.length})`, value: members.length ? members.join('\n') : 'No members', inline: false },
-            { name: 'Permissions (sample)', value: role.permissions.toArray().slice(0, 50).join(', ') || '—', inline: false }
-          )
-          .setFooter({ text: `Created: ${role.createdAt ? role.createdAt.toDateString() : '—'}` });
-        return safeReply(interaction, { embeds: [embed] });
-      }
-
-      if (sub === 'bulkassign') {
-        const role = interaction.options.getRole('role');
-        const filter = interaction.options.getString('filter');
-        if (filter.startsWith('hasRole:')) {
-          const rname = filter.split(':')[1];
-          const target = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === rname.toLowerCase());
-          if (!target) return safeReply(interaction, { content: 'Filter role not found.', ephemeral: true });
-          await interaction.deferReply();
-          let count = 0;
-          const members = await interaction.guild.members.fetch();
-          for (const m of members.values()) {
-            if (m.roles.cache.has(target.id)) {
-              try { await m.roles.add(role); count++; } catch {}
-            }
-          }
-          return safeReply(interaction, { content: `Assigned ${role} to ${count} members` });
-        }
-        return safeReply(interaction, { content: 'Unsupported filter. Use hasRole:ROLE_NAME', ephemeral: true });
-      }
+      // Single reply only (no defer). This is fast UI, so immediate reply is fine.
+      const embed = new EmbedBuilder()
+        .setTitle('Role Utilities — Utility Bot')
+        .setDescription('Open the interactive role permission editor (Add/Remove/Reset/Show).')
+        .setColor(0x2b2d31);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('rolep:init').setLabel('Open Role Permission Editor').setStyle(ButtonStyle.Primary)
+      );
+      // reply (only once)
+      await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
     } catch (err) {
-      console.error('role command error:', err);
-      return safeReply(interaction, { content: 'Action failed: ' + (err.message || err), ephemeral: true });
+      console.error('role command failed', err);
+      try {
+        if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'Internal error while opening role tools.', ephemeral: true });
+      } catch (e) { console.error('failed to notify user about role command failure', e); }
     }
   }
 };
