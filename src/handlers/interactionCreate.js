@@ -22,73 +22,79 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// HELPER: safe edit for message-components:
-// - Immediately deferUpdate() to acknowledge the component interaction.
-// - Then try editing the original message (interaction.message.edit).
-// - If message editing fails, fallback to channel.send a normal message.
-// Returns true if an acknowledgement+attempt to respond was made.
+// NOTE: we intentionally do NOT put the same `customId` more than once inside the *same message's* components.
+// 'Cancel' is added only once per message (in the preview row). Other rows may contain unique custom ids.
+
 async function respondComponentByEditing(interaction, responsePayload) {
+  // Try to acknowledge quickly and then edit original message.
   try {
-    // ack quickly
+    // deferUpdate ACKs the component; gives time to edit the message
     await interaction.deferUpdate().catch(() => null);
 
-    // If no original message (rare), fallback to channel send
-    if (!interaction.message) {
-      if (interaction.channel) {
-        await interaction.channel.send(responsePayload).catch(() => null);
-        return true;
-      }
-      return false;
-    }
-
-    // Try to edit the original message (this is the visible update behavior)
-    try {
-      await interaction.message.edit(responsePayload);
-      return true;
-    } catch (err) {
-      // fallback: send a reply in the channel
+    if (interaction.message) {
+      // Attempt to edit the original message. Make sure components inside responsePayload
+      // don't contain duplicate custom ids (this code constructs them safely).
       try {
-        await interaction.channel.send(responsePayload);
+        await interaction.message.edit(responsePayload);
         return true;
-      } catch (err2) {
-        console.error('respondComponentByEditing: both edit and channel.send failed', err, err2);
-        return false;
+      } catch (err) {
+        console.error('respondComponentByEditing: message.edit failed', err?.message || err);
+        // fallback: attempt a normal channel.send (only if safe)
+        try {
+          if (interaction.channel) {
+            // strip components that may duplicate (safer to send minimal content fallback)
+            const fallback = {};
+            if (responsePayload.embeds) fallback.embeds = responsePayload.embeds;
+            if (responsePayload.content) fallback.content = responsePayload.content;
+            await interaction.channel.send(fallback);
+            return true;
+          }
+        } catch (err2) {
+          console.error('respondComponentByEditing: channel.send fallback failed', err2?.message || err2);
+          return false;
+        }
+      }
+    } else {
+      // no original message — fallback to channel.send minimal payload
+      if (interaction.channel) {
+        const fallback = {};
+        if (responsePayload.embeds) fallback.embeds = responsePayload.embeds;
+        if (responsePayload.content) fallback.content = responsePayload.content;
+        await interaction.channel.send(fallback).catch(() => null);
+        return true;
       }
     }
   } catch (err) {
-    console.error('respondComponentByEditing general failure', err);
-    return false;
+    console.error('respondComponentByEditing general error', err?.message || err);
   }
+  return false;
 }
 
-// HELPER: safe responder for chat commands (ChatInputInteraction)
 async function respondCommand(interaction, payload) {
   try {
     if (!interaction.deferred && !interaction.replied) return await interaction.reply(payload);
     if (interaction.deferred) return await interaction.editReply(payload);
     return await interaction.followUp(payload);
   } catch (err) {
-    // If already acknowledged or expired, attempt an edit/followUp as fallback
     try { if (interaction.deferred || interaction.replied) return await interaction.editReply(payload); } catch {}
     try { return await interaction.followUp(payload); } catch (e) { console.error('respondCommand fallback failed', err, e); }
   }
   return null;
 }
 
-// BUILD SELECT OPTIONS (no emojis)
 function buildOptions(arr) {
   return arr.map(p => ({ label: p.label, value: p.key }));
 }
 
-// Build 3 selects and "All Permissions" row for given context (role/channel)
 function buildPermissionSelects(customBase, payloadKey, context = 'role') {
   const parts = partsForContext(context);
   const rows = [];
+
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     const idPart = ['a', 'b', 'c'][i];
     const menu = new StringSelectMenuBuilder()
-      .setCustomId(`${customBase}:${idPart}:${payloadKey}`)
+      .setCustomId(`${customBase}:${idPart}:${payloadKey}`) // unique per message
       .setPlaceholder(`Permissions (${i + 1}/3)`)
       .addOptions(buildOptions(part))
       .setMinValues(0)
@@ -96,9 +102,9 @@ function buildPermissionSelects(customBase, payloadKey, context = 'role') {
     rows.push(new ActionRowBuilder().addComponents(menu));
   }
 
+  // All permissions button (no Cancel here — Cancel will be in the preview row to avoid duplication)
   const allBtnRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`perm:all:${payloadKey}:${context}`).setLabel('All Permissions').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`perm:all:${payloadKey}:${context}`).setLabel('All Permissions').setStyle(ButtonStyle.Secondary)
   );
 
   return { rows, allBtnRow };
@@ -141,35 +147,30 @@ function formatEnabledPerms(mask, context = 'role') {
   return lines.length ? lines.join('\n') : '—';
 }
 
-// Check whether bot can edit a specific role (ManageRoles permission + role position)
 function botCanManageRole(guild, role) {
   const me = guild.members.me;
   if (!me) return { ok: false, reason: 'Unable to fetch bot member object.' };
-  if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles)) return { ok: false, reason: 'Bot missing Manage Roles permission.' };
-  // bot's highest role position must be greater than target role
+  if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles) && !me.permissions.has(PermissionsBitField.Flags.Administrator)) return { ok: false, reason: 'Bot missing Manage Roles / Administrator permission.' };
   const botRole = me.roles.highest;
   if (!botRole) return { ok: false, reason: 'Bot has no roles.' };
   if (botRole.position <= role.position) return { ok: false, reason: `Bot role position (${botRole.position}) is not higher than target role (${role.position}).` };
   return { ok: true };
 }
 
-// Check whether bot can manage channel overwrites
 function botCanManageChannel(guild, channel) {
   const me = guild.members.me;
   if (!me) return { ok: false, reason: 'Unable to fetch bot member object.' };
-  if (!me.permissions.has(PermissionsBitField.Flags.ManageChannels) && !me.permissions.has(PermissionsBitField.Flags.Administrator)) {
-    return { ok: false, reason: 'Bot missing Manage Channels permission.' };
-  }
+  if (!me.permissions.has(PermissionsBitField.Flags.ManageChannels) && !me.permissions.has(PermissionsBitField.Flags.Administrator)) return { ok: false, reason: 'Bot missing Manage Channels / Administrator permission.' };
   return { ok: true };
 }
 
 module.exports = async function interactionHandler(interaction, client) {
   try {
-    // Handle message components (Buttons / Selects)
+    // Components
     if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
 
-      // START: open role perms editor
+      // Open role perms editor
       if (id === 'rolep:init') {
         const embed = new EmbedBuilder().setTitle('Role Permission Editor').setDescription('Choose action: Add / Remove / Reset / Show').setColor(0x2b2d31);
         const row = new ActionRowBuilder().addComponents(
@@ -182,18 +183,12 @@ module.exports = async function interactionHandler(interaction, client) {
         return;
       }
 
-      // Cancel button
-      if (id === 'common:cancel') {
-        await respondComponentByEditing(interaction, { content: 'Cancelled.', embeds: [], components: [] });
-        return;
-      }
-
-      // All permissions button (marks payload as all)
+      // perm all
       if (id.startsWith('perm:all:')) {
         const [, , payloadKey, context] = id.split(':');
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
         if (!fs.existsSync(tmp)) {
-          await respondComponentByEditing(interaction, { content: 'Payload expired or missing.', ephemeral: true });
+          await respondComponentByEditing(interaction, { content: 'Payload expired/missing.' });
           return;
         }
         const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
@@ -209,20 +204,20 @@ module.exports = async function interactionHandler(interaction, client) {
         const undoId = id.split(':')[1];
         const entry = consumeUndo(undoId);
         if (!entry) {
-          await respondComponentByEditing(interaction, { content: 'Undo entry expired or invalid.', ephemeral: true });
+          await respondComponentByEditing(interaction, { content: 'Undo expired or invalid.' });
           return;
         }
         try {
           await entry.applyUndoFn(entry.beforeState);
-          await respondComponentByEditing(interaction, { content: 'Undo applied successfully.', ephemeral: true });
+          await respondComponentByEditing(interaction, { content: 'Undo applied successfully.' });
         } catch (err) {
-          console.error('Undo failed', err);
-          await respondComponentByEditing(interaction, { content: 'Undo failed: ' + (err.message || err), ephemeral: true });
+          console.error('Undo apply failed', err);
+          await respondComponentByEditing(interaction, { content: 'Undo failed: ' + (err.message || err) });
         }
         return;
       }
 
-      // role action -> ask to select a role
+      // role action -> select role
       if (id.startsWith('rolep:action:')) {
         const mode = id.split(':')[2];
         const embed = new EmbedBuilder().setTitle(`Select role — ${mode.toUpperCase()}`).setColor(0x2b2d31);
@@ -231,21 +226,14 @@ module.exports = async function interactionHandler(interaction, client) {
         return;
       }
 
-      // role preview: show before/after for role perms
+      // role preview -> show before/after
       if (id.startsWith('rolep:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        if (!fs.existsSync(tmp)) {
-          await respondComponentByEditing(interaction, { content: 'Selections expired or missing. Re-run the editor.', ephemeral: true });
-          return;
-        }
+        if (!fs.existsSync(tmp)) { await respondComponentByEditing(interaction, { content: 'Selections expired or missing.' }); return; }
         const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
-        const roleId = payload.roleId;
-        const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
-        if (!role) {
-          await respondComponentByEditing(interaction, { content: 'Role not found or was deleted.', ephemeral: true });
-          return;
-        }
+        const role = await interaction.guild.roles.fetch(payload.roleId).catch(() => null);
+        if (!role) { await respondComponentByEditing(interaction, { content: 'Role not found.' }); return; }
 
         const mask = computeMaskFromPayload(payloadKey);
         let afterMask = BigInt(role.permissions.bitfield);
@@ -261,40 +249,30 @@ module.exports = async function interactionHandler(interaction, client) {
           .addFields(
             { name: 'Before (enabled)', value: beforeList, inline: false },
             { name: 'After (enabled)', value: afterList, inline: false }
-          )
-          .setColor(role.color || 0x2b2d31)
-          .setFooter({ text: '✅ = enabled (only enabled perms shown). Click Confirm to apply.' });
+          ).setColor(role.color || 0x2b2d31)
+          .setFooter({ text: '✅ = enabled. Click Confirm to apply.' });
 
-        const row = new ActionRowBuilder().addComponents(
+        // preview row contains Confirm + Cancel (only one cancel in message)
+        const previewRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`rolep:confirm:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+          new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
         );
-        await respondComponentByEditing(interaction, { embeds: [embed], components: [row] });
+
+        await respondComponentByEditing(interaction, { embeds: [embed], components: [previewRow] });
         return;
       }
 
-      // role confirm: apply role permissions changes (with checks)
+      // role confirm -> apply (with checks)
       if (id.startsWith('rolep:confirm:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        if (!fs.existsSync(tmp)) {
-          await respondComponentByEditing(interaction, { content: 'Payload missing or expired.', ephemeral: true });
-          return;
-        }
+        if (!fs.existsSync(tmp)) { await respondComponentByEditing(interaction, { content: 'Payload missing.' }); return; }
         const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
-        const roleId = payload.roleId;
-        const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
-        if (!role) {
-          await respondComponentByEditing(interaction, { content: 'Role not found.', ephemeral: true });
-          return;
-        }
+        const role = await interaction.guild.roles.fetch(payload.roleId).catch(() => null);
+        if (!role) { await respondComponentByEditing(interaction, { content: 'Role not found.' }); return; }
 
-        // check bot can manage role
         const botCheck = botCanManageRole(interaction.guild, role);
-        if (!botCheck.ok) {
-          await respondComponentByEditing(interaction, { content: `Cannot apply role changes: ${botCheck.reason}`, ephemeral: true });
-          return;
-        }
+        if (!botCheck.ok) { await respondComponentByEditing(interaction, { content: `Cannot apply role changes: ${botCheck.reason}` }); return; }
 
         try {
           const before = BigInt(role.permissions.bitfield);
@@ -306,7 +284,6 @@ module.exports = async function interactionHandler(interaction, client) {
 
           await role.edit({ permissions: newMask, reason: 'Applied via role perms editor' });
 
-          // store undo info
           const undoId = storeUndo(interaction.guild.id, { roleId: role.id, before: before.toString() }, async (beforeState) => {
             const r = await interaction.guild.roles.fetch(beforeState.roleId);
             if (r) await r.edit({ permissions: BigInt(beforeState.before) });
@@ -319,25 +296,19 @@ module.exports = async function interactionHandler(interaction, client) {
           await respondComponentByEditing(interaction, { embeds: [embed], components: [undoRow] });
         } catch (err) {
           console.error('Failed to apply role edit', err);
-          await respondComponentByEditing(interaction, { content: `Failed to apply role changes: ${err.message || err}`, ephemeral: true });
+          await respondComponentByEditing(interaction, { content: `Failed to apply role changes: ${err.message || err}` });
         }
         return;
       }
 
-      // Channel permission preview and confirm handlers
+      // Channel preview/confirm handlers (same pattern)
       if (id.startsWith('chanp:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        if (!fs.existsSync(tmp)) {
-          await respondComponentByEditing(interaction, { content: 'Payload missing or expired.', ephemeral: true });
-          return;
-        }
+        if (!fs.existsSync(tmp)) { await respondComponentByEditing(interaction, { content: 'Payload missing.' }); return; }
         const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
         const ch = await interaction.guild.channels.fetch(payload.channelId).catch(() => null);
-        if (!ch) {
-          await respondComponentByEditing(interaction, { content: 'Channel not found.', ephemeral: true });
-          return;
-        }
+        if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found.' }); return; }
 
         const existing = ch.permissionOverwrites.cache.get(payload.targetId);
         const beforeAllow = BigInt(existing?.allow?.bitfield || existing?.allow || 0n);
@@ -352,38 +323,27 @@ module.exports = async function interactionHandler(interaction, client) {
             { name: 'Before — Denied (enabled)', value: formatEnabledPerms(beforeDeny, 'channel'), inline: false },
             { name: 'After — Allowed (enabled)', value: formatEnabledPerms(allow, 'channel'), inline: false },
             { name: 'After — Denied (enabled)', value: formatEnabledPerms(deny, 'channel'), inline: false }
-          )
-          .setColor(0x2b2d31)
+          ).setColor(0x2b2d31)
           .setFooter({ text: '✅ = enabled (only enabled perms shown). Click Confirm to apply.' });
 
-        const row = new ActionRowBuilder().addComponents(
+        const previewRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`chanp:confirm:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+          new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
         );
-        await respondComponentByEditing(interaction, { embeds: [embed], components: [row] });
+        await respondComponentByEditing(interaction, { embeds: [embed], components: [previewRow] });
         return;
       }
 
       if (id.startsWith('chanp:confirm:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        if (!fs.existsSync(tmp)) {
-          await respondComponentByEditing(interaction, { content: 'Payload missing or expired.', ephemeral: true });
-          return;
-        }
+        if (!fs.existsSync(tmp)) { await respondComponentByEditing(interaction, { content: 'Payload missing.' }); return; }
         const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
         const ch = await interaction.guild.channels.fetch(payload.channelId).catch(() => null);
-        if (!ch) {
-          await respondComponentByEditing(interaction, { content: 'Channel not found.', ephemeral: true });
-          return;
-        }
+        if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found.' }); return; }
 
-        // check bot can manage channel
         const botCheck = botCanManageChannel(interaction.guild, ch);
-        if (!botCheck.ok) {
-          await respondComponentByEditing(interaction, { content: `Cannot apply channel overwrite: ${botCheck.reason}`, ephemeral: true });
-          return;
-        }
+        if (!botCheck.ok) { await respondComponentByEditing(interaction, { content: `Cannot apply channel overwrite: ${botCheck.reason}` }); return; }
 
         try {
           const existing = ch.permissionOverwrites.cache.get(payload.targetId);
@@ -407,13 +367,13 @@ module.exports = async function interactionHandler(interaction, client) {
           await respondComponentByEditing(interaction, { embeds: [embed], components: [undoRow] });
         } catch (err) {
           console.error('Failed to apply channel overwrite', err);
-          await respondComponentByEditing(interaction, { content: `Failed to apply channel overwrite: ${err.message || err}`, ephemeral: true });
+          await respondComponentByEditing(interaction, { content: `Failed to apply channel overwrite: ${err.message || err}` });
         }
         return;
       }
     }
 
-    // ROLE SELECT MENU handling
+    // Role select menu chosen
     if (interaction.isRoleSelectMenu && interaction.isRoleSelectMenu()) {
       const cid = interaction.customId;
       if (cid.startsWith('rolep:select:')) {
@@ -425,13 +385,18 @@ module.exports = async function interactionHandler(interaction, client) {
         fs.writeFileSync(tmp, JSON.stringify(payload));
 
         const { rows, allBtnRow } = buildPermissionSelects(`rolep:sel:${mode}:${roleId}`, payloadKey, 'role');
-        const previewRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Preview').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        const embed = new EmbedBuilder().setTitle(`Select Permissions — ${mode.toUpperCase()}`).setDescription('Choose permissions across the lists (3). Use "All Permissions" to pick all. Then click Preview.').setColor(0x2b2d31);
+        // previewRow includes Cancel and Confirm (unique custom ids per payloadKey)
+        const previewRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Preview').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+        );
+        const embed = new EmbedBuilder().setTitle(`Select Permissions — ${mode.toUpperCase()}`).setDescription('Use the lists (3) and All Permissions if needed, then Preview.').setColor(0x2b2d31);
+        // components: allBtnRow (All Permissions), then the 3 select rows, then previewRow (with Cancel)
         await respondComponentByEditing(interaction, { embeds: [embed], components: [allBtnRow, ...rows, previewRow] });
         return;
       }
 
-      // channel perms role select (for channel overwrite)
+      // channel perms role select (for adding role overwrite)
       if (cid.startsWith('chanp:select_role:')) {
         const parts = cid.split(':');
         const action = parts[2];
@@ -443,14 +408,17 @@ module.exports = async function interactionHandler(interaction, client) {
         fs.writeFileSync(tmp, JSON.stringify(payload));
 
         const { rows, allBtnRow } = buildPermissionSelects(`chanp:sel:${channelId}:${roleId}`, payloadKey, 'channel');
-        const previewRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`chanp:preview:${payloadKey}`).setLabel('Preview').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        const embed = new EmbedBuilder().setTitle('Select channel permissions').setDescription('Choose permissions across the lists (3). Use "All Permissions" to pick all. Then Preview.').setColor(0x2b2d31);
+        const previewRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`chanp:preview:${payloadKey}`).setLabel('Preview').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+        );
+        const embed = new EmbedBuilder().setTitle('Select channel permissions').setDescription('Use the lists (3). Then Preview.').setColor(0x2b2d31);
         await respondComponentByEditing(interaction, { embeds: [embed], components: [allBtnRow, ...rows, previewRow] });
         return;
       }
     }
 
-    // STRING SELECT MENUS (permission picks) - store selections
+    // String select menus (permissions)
     if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
       const cid = interaction.customId;
       const parts = cid.split(':');
@@ -458,22 +426,19 @@ module.exports = async function interactionHandler(interaction, client) {
         const part = parts[parts.length - 2]; // 'a'|'b'|'c'
         const payloadKey = parts[parts.length - 1];
         persistSelections(payloadKey, part, interaction.values);
-        // ack then give a short feedback (we'll edit the message)
-        await respondComponentByEditing(interaction, { embeds: [new EmbedBuilder().setTitle('Permissions Selected').setDescription(`Selected ${interaction.values.length} items in this list. Click Preview when ready.`).setColor(0x2b2d31)] , components: [] });
+        const embed = new EmbedBuilder().setTitle('Permissions Selected').setDescription(`Selected ${interaction.values.length} items in this list. Click Preview when ready.`).setColor(0x2b2d31);
+        await respondComponentByEditing(interaction, { embeds: [embed], components: [] });
         return;
       }
     }
 
-    // CHANNEL SELECT MENU (choose a channel)
+    // Channel select menu
     if (interaction.isChannelSelectMenu && interaction.isChannelSelectMenu()) {
       const cid = interaction.customId;
       if (cid === 'chanp:select_channel') {
         const channelId = interaction.values[0];
         const ch = await interaction.guild.channels.fetch(channelId).catch(() => null);
-        if (!ch) {
-          await respondComponentByEditing(interaction, { content: 'Channel not found or removed.', ephemeral: true });
-          return;
-        }
+        if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found.' }); return; }
         const embed = new EmbedBuilder().setTitle(`Configure Channel: ${ch.name}`).setDescription('Choose action').setColor(0x2b2d31);
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`chanp:action:addrole:${channelId}`).setLabel('Add Role Overwrite').setStyle(ButtonStyle.Primary),
@@ -486,7 +451,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // chanp action buttons (addrole/view/addmember/change)
+    // chanp action buttons
     if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
       if (id.startsWith('chanp:action:')) {
@@ -494,7 +459,7 @@ module.exports = async function interactionHandler(interaction, client) {
         const action = parts[2];
         const channelId = parts[3];
         const ch = await interaction.guild.channels.fetch(channelId).catch(() => null);
-        if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found', ephemeral: true }); return; }
+        if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found.' }); return; }
 
         if (action === 'view') {
           const overwrites = ch.permissionOverwrites.cache.map(o => {
@@ -515,9 +480,8 @@ module.exports = async function interactionHandler(interaction, client) {
         }
 
         if (action === 'addmember') {
-          // placeholder until member-select support
-          const row = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`chanp:select_role:addmember:${channelId}`).setPlaceholder('Select role for member overwrite (temporary)'));
-          const embed = new EmbedBuilder().setTitle('Select Role (member soon)').setDescription('Choose a role to approximate member selection for now').setColor(0x2b2d31);
+          const row = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`chanp:select_role:addmember:${channelId}`).setPlaceholder('Select role (member support later)'));
+          const embed = new EmbedBuilder().setTitle('Select Role (member soon)').setColor(0x2b2d31);
           await respondComponentByEditing(interaction, { embeds: [embed], components: [row] });
           return;
         }
@@ -532,12 +496,10 @@ module.exports = async function interactionHandler(interaction, client) {
     }
 
   } catch (err) {
-    // If anything unexpected happens, try to reply gracefully (for commands) or log for components
     console.error('interaction handler unexpected error:', err && err.stack ? err.stack : err);
     try {
       if (interaction && interaction.isMessageComponent && interaction.isMessageComponent()) {
-        // best-effort - edit message to show an error
-        await respondComponentByEditing(interaction, { content: 'Internal handler error — check logs.', ephemeral: true }).catch(() => null);
+        await respondComponentByEditing(interaction, { content: 'Internal handler error — check logs.' }).catch(() => null);
       } else if (interaction) {
         if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'Internal handler error', ephemeral: true });
         else await interaction.followUp({ content: 'Internal handler error', ephemeral: true });
