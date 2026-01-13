@@ -4,7 +4,7 @@ function flagSafe(x) {
   try { return BigInt(x || 0n); } catch { return 0n; }
 }
 
-// Role permissions (ordered exactly as you listed). Keys are internal IDs.
+// === ROLE PERMISSIONS (ordered as you requested) ===
 const ROLE_PERMS = [
   { key: 'ViewChannels', label: 'View Channels', flag: flagSafe(PermissionsBitField.Flags.ViewChannel) },
   { key: 'ManageChannels', label: 'Manage Channels', flag: flagSafe(PermissionsBitField.Flags.ManageChannels) },
@@ -51,7 +51,7 @@ const ROLE_PERMS = [
   { key: 'MoveMembers', label: 'Move Members', flag: flagSafe(PermissionsBitField.Flags.MoveMembers) },
   { key: 'SetVoiceChannelStatus', label: 'Set Voice Channel Status', flag: flagSafe(PermissionsBitField.Flags.ManageChannels) },
   { key: 'UseApplicationCommands', label: 'Use Application Commands', flag: flagSafe(PermissionsBitField.Flags.UseApplicationCommands) },
-  { key: 'UseActivities', label: 'Use Activities', flag: flagSafe(PermissionsBitField.Flags.StartEmbeddedActivities || PermissionsBitField.Flags.UseExternalApps) },
+  { key: 'UseActivities', label: 'Use Activities', flag: flagSafe(PermissionsBitField.Flags.UseExternalApps) },
   { key: 'UseExternalApps', label: 'Use External Apps', flag: flagSafe(PermissionsBitField.Flags.UseExternalApps) },
   { key: 'RequestToSpeak', label: 'Request To Speak', flag: flagSafe(PermissionsBitField.Flags.RequestToSpeak) },
   { key: 'CreateEvents', label: 'Create Events', flag: flagSafe(PermissionsBitField.Flags.CreateInstantInvite) },
@@ -59,7 +59,7 @@ const ROLE_PERMS = [
   { key: 'Administrator', label: 'Administrator', flag: flagSafe(PermissionsBitField.Flags.Administrator) }
 ];
 
-// Channel permissions (ordered)
+// === CHANNEL PERMISSIONS (ordered) ===
 const CHANNEL_PERMS = [
   { key: 'ViewChannel', label: 'View Channel', flag: flagSafe(PermissionsBitField.Flags.ViewChannel) },
   { key: 'ManageChannel', label: 'Manage Channel', flag: flagSafe(PermissionsBitField.Flags.ManageChannels) },
@@ -85,60 +85,38 @@ const CHANNEL_PERMS = [
   { key: 'SendVoiceMessages', label: 'Send Voice Messages', flag: 0n },
   { key: 'CreatePolls', label: 'Create Polls', flag: 0n },
   { key: 'UseApplicationCommands', label: 'Use Application Commands', flag: flagSafe(PermissionsBitField.Flags.UseApplicationCommands) },
-  { key: 'UseActivities', label: 'Use Activities', flag: flagSafe(PermissionsBitField.Flags.StartEmbeddedActivities || PermissionsBitField.Flags.UseExternalApps) },
+  { key: 'UseActivities', label: 'Use Activities', flag: flagSafe(PermissionsBitField.Flags.UseExternalApps) },
   { key: 'UseExternalApps', label: 'Use External Apps', flag: flagSafe(PermissionsBitField.Flags.UseExternalApps) }
 ];
 
-// Build lookup maps and ALL flags
+// Build maps and "ALL"
 const ROLE_MAP = {};
 const CHANNEL_MAP = {};
 let ROLE_ALL_FLAGS = 0n;
 let CHANNEL_ALL_FLAGS = 0n;
-
-for (const p of ROLE_PERMS) {
-  ROLE_MAP[p.key] = p;
-  ROLE_ALL_FLAGS |= BigInt(p.flag || 0n);
-}
-for (const p of CHANNEL_PERMS) {
-  CHANNEL_MAP[p.key] = p;
-  CHANNEL_ALL_FLAGS |= BigInt(p.flag || 0n);
-}
-
-// split into 3 parts while conserving order
-function splitIntoThree(arr) {
-  const third = Math.ceil(arr.length / 3);
-  return [arr.slice(0, third), arr.slice(third, third * 2), arr.slice(third * 2)];
-}
-
-const ROLE_SELECT_PARTS = splitIntoThree(ROLE_PERMS);
-const CHANNEL_SELECT_PARTS = splitIntoThree(CHANNEL_PERMS);
+for (const p of ROLE_PERMS) { ROLE_MAP[p.key] = p; ROLE_ALL_FLAGS |= BigInt(p.flag || 0n); }
+for (const p of CHANNEL_PERMS) { CHANNEL_MAP[p.key] = p; CHANNEL_ALL_FLAGS |= BigInt(p.flag || 0n); }
 
 function nameToFlag(key, context = 'role') {
   if (context === 'role') return ROLE_MAP[key] ? BigInt(ROLE_MAP[key].flag || 0n) : 0n;
   return CHANNEL_MAP[key] ? BigInt(CHANNEL_MAP[key].flag || 0n) : 0n;
 }
+function permsForContext(context = 'role') { return context === 'role' ? ROLE_PERMS : CHANNEL_PERMS; }
+function allFlagsForContext(context = 'role') { return context === 'role' ? ROLE_ALL_FLAGS : CHANNEL_ALL_FLAGS; }
 
-function permsForContext(context = 'role') {
-  return context === 'role' ? ROLE_PERMS : CHANNEL_PERMS;
-}
-
-function partsForContext(context = 'role') {
-  return context === 'role' ? ROLE_SELECT_PARTS : CHANNEL_SELECT_PARTS;
-}
-
-function allFlagsForContext(context = 'role') {
-  return context === 'role' ? ROLE_ALL_FLAGS : CHANNEL_ALL_FLAGS;
+// Split into TWO main parts, but if >50 it will generate extra parts (each <=25)
+function splitIntoMenus(arr) {
+  const maxPer = 25;
+  const menus = [];
+  for (let i = 0; i < arr.length; i += maxPer) menus.push(arr.slice(i, i + maxPer));
+  return menus; // array of arrays
+us(arr);
 }
 
 module.exports = {
   ROLE_PERMS,
   CHANNEL_PERMS,
-  ROLE_MAP,
-  CHANNEL_MAP,
-  ROLE_SELECT_PARTS,
-  CHANNEL_SELECT_PARTS,
   nameToFlag,
   permsForContext,
-  partsForContext,
-  allFlagsForContext
+  ext
 };
