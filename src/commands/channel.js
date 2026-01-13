@@ -1,37 +1,23 @@
 // src/commands/channel.js
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ChannelSelectMenuBuilder } = require('discord.js');
-
-async function safeReply(interaction, payload) {
-  try {
-    if (!interaction.deferred && !interaction.replied) {
-      return await interaction.reply(payload);
-    }
-    if (interaction.deferred) {
-      return await interaction.editReply(payload);
-    }
-    if (interaction.replied) {
-      return await interaction.followUp(payload);
-    }
-  } catch (err) {
-    try { if (interaction.deferred || interaction.replied) return await interaction.editReply(payload); } catch {}
-    try { return await interaction.followUp(payload); } catch (e) { console.error('safeReply final fallback failed:', err, e); }
-  }
-  return null;
-}
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('channel')
-    .setDescription('Channel utilities')
-    .addSubcommand(s => s.setName('perms').setDescription('Interactive channel permission editor')),
-
+    .setDescription('Channel utilities (permission editor, create, edit)'),
   async execute(interaction) {
-    const sub = interaction.options.getSubcommand();
-    if (sub === 'perms') {
-      const embed = new EmbedBuilder().setTitle('Channel Permission Editor').setDescription('Select a channel to configure permission overwrites').setColor(0x2b2d31);
-      const row = new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId('chanp:select_channel').setPlaceholder('Select channel'));
-      return safeReply(interaction, { embeds: [embed], components: [row] });
+    try {
+      const embed = new EmbedBuilder()
+        .setTitle('Channel Utilities — Utility Bot')
+        .setDescription('Click to choose a channel to configure (permission overwrites etc).')
+        .setColor(0x2b2d31);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('chanp:choose').setLabel('Select Channel').setStyle(ButtonStyle.Primary)
+      );
+      await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
+    } catch (err) {
+      console.error('channel command failed', err);
+      try { if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: 'Internal error while opening channel tools.', ephemeral: true }); } catch (e) {}
     }
-    return safeReply(interaction, { content: 'Unknown subcommand', ephemeral: true });
   }
 };
