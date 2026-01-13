@@ -9,97 +9,86 @@ const {
   PermissionsBitField
 } = require('discord.js');
 
-const { PERM_SELECT_A, PERM_SELECT_B, nameToFlag, PERM_DEFS, ALL_FLAGS } = require('../lib/permissions');
+const {
+  nameToFlag,
+  permsForContext,
+  partsForContext,
+  allFlagsForContext
+} = require('../lib/permissions');
+
 const { storeUndo, consumeUndo } = require('../lib/undoCache');
 const fs = require('fs');
 const path = require('path');
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-/**
- * safeRespond(interaction, payload)
- * - Handles ChatInputCommandInteraction and MessageComponentInteraction robustly.
- * - Prefers update() for components when the interaction hasn't been acknowledged.
- * - Falls back to editReply()/followUp() when needed.
- * - Catches known Discord API errors and attempts a safe fallback instead of throwing.
- */
+// Safe responder (defensive; avoids double-ack problems)
 async function safeRespond(interaction, payload) {
   try {
-    // If it's a component interaction (buttons/selects)
     if (interaction.isMessageComponent && interaction.isMessageComponent()) {
-      // If nothing has been acknowledged yet, try update()
       if (!interaction.deferred && !interaction.replied) {
-        try { return await interaction.update(payload); } catch (err) {
-          // If update fails, continue to fallback logic below
-        }
+        try { return await interaction.update(payload); } catch (e) {}
       }
-      // If the interaction was deferred earlier, edit the deferred reply
       if (interaction.deferred) {
-        try { return await interaction.editReply(payload); } catch (err) { /* fallthrough */ }
+        try { return await interaction.editReply(payload); } catch (e) {}
       }
-      // If we've already replied, try followUp
       if (interaction.replied) {
-        try { return await interaction.followUp(payload); } catch (err) { /* fallthrough */ }
+        try { return await interaction.followUp(payload); } catch (e) {}
       }
-      // Final fallback: try reply (will fail if already acked)
-      try { return await interaction.reply(payload); } catch (err) { /* fallthrough */ }
+      try { return await interaction.reply(payload); } catch (e) {}
     } else {
-      // For normal command interactions
       if (!interaction.deferred && !interaction.replied) {
-        try { return await interaction.reply(payload); } catch (err) { /* fallthrough */ }
+        try { return await interaction.reply(payload); } catch (e) {}
       }
       if (interaction.deferred) {
-        try { return await interaction.editReply(payload); } catch (err) { /* fallthrough */ }
+        try { return await interaction.editReply(payload); } catch (e) {}
       }
       if (interaction.replied) {
-        try { return await interaction.followUp(payload); } catch (err) { /* fallthrough */ }
+        try { return await interaction.followUp(payload); } catch (e) {}
       }
     }
   } catch (err) {
-    // If we hit known errors (already acknowledged / unknown interaction), attempt safe fallbacks
-    const msg = err && err.message ? err.message : '';
-    // If interaction was acknowledged already, try editReply or followUp
     try {
-      if (interaction.deferred || interaction.replied) {
-        return await interaction.editReply(payload);
-      }
-      // Last resort: followUp (works if initial reply happened)
+      if (interaction.deferred || interaction.replied) return await interaction.editReply(payload);
       return await interaction.followUp(payload);
     } catch (err2) {
       console.error('safeRespond final fallback failed:', err, err2);
     }
   }
-  // If we reach here, just log and return null
   console.warn('safeRespond: could not deliver response (interaction may be expired).');
   return null;
 }
 
-// (Helper functions follow — same as your original logic, unchanged)
-function buildSelectOptionsFrom(defs) {
-  return defs.map(d => ({ label: d.label, value: d.key }));
+// Build select options (no emojis in labels)
+function buildOptions(arr) {
+  return arr.map(p => ({ label: p.label, value: p.key }));
 }
 
-function buildTwoPermissionSelects(customBase, payloadKey) {
-  const selA = new StringSelectMenuBuilder()
-    .setCustomId(`${customBase}:a:${payloadKey}`)
-    .setPlaceholder('Permissions (1/2)')
-    .addOptions(buildSelectOptionsFrom(PERM_SELECT_A))
-    .setMinValues(0)
-    .setMaxValues(Math.min(25, PERM_SELECT_A.length));
-
-  const selB = new StringSelectMenuBuilder()
-    .setCustomId(`${customBase}:b:${payloadKey}`)
-    .setPlaceholder('Permissions (2/2)')
-    .addOptions(buildSelectOptionsFrom(PERM_SELECT_B))
-    .setMinValues(0)
-    .setMaxValues(Math.min(25, PERM_SELECT_B.length));
-
-  return [
-    new ActionRowBuilder().addComponents(selA),
-    new ActionRowBuilder().addComponents(selB)
-  ];
+// Build permission selects for a specific context (role/channel)
+// returns array of ActionRowBuilders (3 rows), and a top-row that contains the "All" button
+function buildPermissionSelects(customBase, payloadKey, context = 'role') {
+  const parts = partsForContext(context); // [partA, partB, partC]
+  const rows = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const idPart = ['a', 'b', 'c'][i];
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`${customBase}:${idPart}:${payloadKey}`)
+      .setPlaceholder(`Permissions (${i + 1}/3)`)
+      .addOptions(buildOptions(part))
+      .setMinValues(0)
+      .setMaxValues(Math.min(25, part.length)); // safe cap
+    rows.push(new ActionRowBuilder().addComponents(menu));
+  }
+  // All-permissions button
+  const allBtnRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`perm:all:${payloadKey}:${context}`).setLabel('All Permissions').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+  );
+  return { rows, allBtnRow };
 }
 
+// Persist selection part (a|b|c)
 function persistSelections(payloadKey, part, values) {
   const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
   let data = {};
@@ -111,37 +100,43 @@ function persistSelections(payloadKey, part, values) {
   fs.writeFileSync(tmp, JSON.stringify(data));
 }
 
+// Compute mask from payloadKey using stored selections; respects context (role/channel)
 function computeMaskFromPayload(payloadKey) {
   const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
   if (!fs.existsSync(tmp)) return 0n;
   const data = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+  const context = data.context || 'role';
   const selA = data.selections?.a || [];
   const selB = data.selections?.b || [];
-  if (selA.includes('ALL') || selB.includes('ALL')) return ALL_FLAGS;
+  const selC = data.selections?.c || [];
+  // if 'ALL' chosen
+  if (selA.includes('ALL') || selB.includes('ALL') || selC.includes('ALL') || data.all === true) {
+    return allFlagsForContext(context);
+  }
   let mask = 0n;
-  for (const k of [...selA, ...selB]) mask |= nameToFlag(k);
+  for (const k of [...selA, ...selB, ...selC]) {
+    mask |= nameToFlag(k, context);
+  }
   return mask;
 }
 
-function formatEnabledPerms(mask) {
+// Format enabled perms (only show enabled ones with ✅), based on context
+function formatEnabledPerms(mask, context = 'role') {
+  const perms = permsForContext(context);
   const lines = [];
-  for (const d of PERM_DEFS) {
-    const flag = nameToFlag(d.key);
-    if (flag && (BigInt(flag) & BigInt(mask)) !== 0n) {
-      lines.push(`✅ ${d.label}`);
-    }
+  for (const p of perms) {
+    const f = nameToFlag(p.key, context);
+    if (f && (BigInt(f) & BigInt(mask)) !== 0n) lines.push(`✅ ${p.label}`);
   }
   return lines.length ? lines.join('\n') : '—';
 }
 
-// Main exported interaction handler (keeps your flows)
 module.exports = async function interactionHandler(interaction, client) {
   try {
-    // Handle Buttons
+    // Buttons
     if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
 
-      // Role perms start
       if (id === 'rolep:init') {
         const embed = new EmbedBuilder().setTitle('Role Permission Editor').setDescription('Choose action: Add / Remove / Reset / Show').setColor(0x2b2d31);
         const row = new ActionRowBuilder().addComponents(
@@ -153,9 +148,23 @@ module.exports = async function interactionHandler(interaction, client) {
         return await safeRespond(interaction, { embeds: [embed], components: [row] });
       }
 
-      // Cancel
       if (id === 'common:cancel') {
         return await safeRespond(interaction, { content: 'Cancelled.', embeds: [], components: [] });
+      }
+
+      // All permissions button pressed -> sets payload all=true
+      if (id.startsWith('perm:all:')) {
+        // perm:all:<payloadKey>:<context>
+        const parts = id.split(':');
+        const payloadKey = parts[2];
+        const context = parts[3] || 'role';
+        const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
+        if (!fs.existsSync(tmp)) return await safeRespond(interaction, { content: 'Payload expired.', ephemeral: true });
+        const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+        payload.all = true;
+        payload.context = context;
+        fs.writeFileSync(tmp, JSON.stringify(payload));
+        return await safeRespond(interaction, { content: 'All permissions selected. Click Preview.', ephemeral: true });
       }
 
       // Undo
@@ -171,7 +180,7 @@ module.exports = async function interactionHandler(interaction, client) {
         }
       }
 
-      // role actions -> show role select
+      // role action -> ask role select
       if (id.startsWith('rolep:action:')) {
         const mode = id.split(':')[2];
         const embed = new EmbedBuilder().setTitle(`Select role — ${mode.toUpperCase()}`).setColor(0x2b2d31);
@@ -179,7 +188,7 @@ module.exports = async function interactionHandler(interaction, client) {
         return await safeRespond(interaction, { embeds: [embed], components: [row] });
       }
 
-      // role preview / confirm & channel preview / confirm handlers:
+      // preview/confirm/chan preview/confirm handlers (unchanged logic, but uses context-aware mask)
       if (id.startsWith('rolep:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
@@ -188,14 +197,15 @@ module.exports = async function interactionHandler(interaction, client) {
         const role = await interaction.guild.roles.fetch(payload.roleId).catch(() => null);
         if (!role) return await safeRespond(interaction, { content: 'Role not found.', ephemeral: true });
 
+        const context = 'role';
         const mask = computeMaskFromPayload(payloadKey);
         let afterMask = BigInt(role.permissions.bitfield);
         if (payload.mode === 'add') afterMask = afterMask | mask;
         else if (payload.mode === 'remove') afterMask = afterMask & ~mask;
         else if (payload.mode === 'reset') afterMask = 0n;
 
-        const beforeList = formatEnabledPerms(BigInt(role.permissions.bitfield));
-        const afterList = formatEnabledPerms(afterMask);
+        const beforeList = formatEnabledPerms(BigInt(role.permissions.bitfield), context);
+        const afterList = formatEnabledPerms(afterMask, context);
 
         const embed = new EmbedBuilder()
           .setTitle(`Preview — ${payload.mode.toUpperCase()} — ${role.name}`)
@@ -234,7 +244,6 @@ module.exports = async function interactionHandler(interaction, client) {
           }, 45);
 
           try { fs.unlinkSync(tmp); } catch {}
-
           const embed = new EmbedBuilder().setTitle('Permissions Updated').setDescription(`Applied changes to ${role.name}`).setColor(0x00AA00);
           const undoRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`undo:${undoId}`).setLabel('Undo').setStyle(ButtonStyle.Secondary));
           return await safeRespond(interaction, { embeds: [embed], components: [undoRow] });
@@ -252,26 +261,23 @@ module.exports = async function interactionHandler(interaction, client) {
         const ch = await interaction.guild.channels.fetch(payload.channelId).catch(() => null);
         if (!ch) return await safeRespond(interaction, { content: 'Channel not found.', ephemeral: true });
 
-        const before = ch.permissionOverwrites.cache.get(payload.targetId);
-        const beforeAllow = BigInt(before?.allow?.bitfield || before?.allow || 0n);
-        const beforeDeny = BigInt(before?.deny?.bitfield || before?.deny || 0n);
+        const context = 'channel';
+        const existing = ch.permissionOverwrites.cache.get(payload.targetId);
+        const beforeAllow = BigInt(existing?.allow?.bitfield || existing?.allow || 0n);
+        const beforeDeny = BigInt(existing?.deny?.bitfield || existing?.deny || 0n);
         const allow = BigInt(payload.allowMask || '0');
         const deny = BigInt(payload.denyMask || '0');
 
-        const embed = new EmbedBuilder()
-          .setTitle(`Preview — Channel Overwrite — ${ch.name}`)
+        const embed = new EmbedBuilder().setTitle(`Preview — Channel Overwrite — ${ch.name}`)
           .addFields(
-            { name: 'Before — Allowed (enabled)', value: formatEnabledPerms(beforeAllow), inline: false },
-            { name: 'Before — Denied (enabled)', value: formatEnabledPerms(beforeDeny), inline: false },
-            { name: 'After — Allowed (enabled)', value: formatEnabledPerms(allow), inline: false },
-            { name: 'After — Denied (enabled)', value: formatEnabledPerms(deny), inline: false }
+            { name: 'Before — Allowed (enabled)', value: formatEnabledPerms(beforeAllow, context), inline: false },
+            { name: 'Before — Denied (enabled)', value: formatEnabledPerms(beforeDeny, context), inline: false },
+            { name: 'After — Allowed (enabled)', value: formatEnabledPerms(allow, context), inline: false },
+            { name: 'After — Denied (enabled)', value: formatEnabledPerms(deny, context), inline: false }
           ).setColor(0x2b2d31)
           .setFooter({ text: '✅ = enabled (only enabled perms shown). Click Confirm to apply.' });
 
-        const row = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`chanp:confirm:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Success),
-          new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
-        );
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`chanp:confirm:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
         return await safeRespond(interaction, { embeds: [embed], components: [row] });
       }
 
@@ -298,7 +304,6 @@ module.exports = async function interactionHandler(interaction, client) {
           }, 45);
 
           try { fs.unlinkSync(tmp); } catch {}
-
           const embed = new EmbedBuilder().setTitle('Channel Overwrite Applied').setDescription(`Applied overwrite on <#${ch.id}>`).setColor(0x00AA00);
           const undoRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`undo:${undoId}`).setLabel('Undo').setStyle(ButtonStyle.Secondary));
           return await safeRespond(interaction, { embeds: [embed], components: [undoRow] });
@@ -308,44 +313,48 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // Role select menu
+    // Role select menu chosen -> start permission selects (role context)
     if (interaction.isRoleSelectMenu && interaction.isRoleSelectMenu()) {
       const cid = interaction.customId;
       if (cid.startsWith('rolep:select:')) {
         const mode = cid.split(':')[2];
         const roleId = interaction.values[0];
-        const payloadKey = `payload-${Date.now()}-${Math.floor(Math.random()*10000)}`;
+        const payloadKey = `payload-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        const payload = { mode, roleId, selections: {} };
+        const payload = { mode, roleId, selections: {}, context: 'role' };
         fs.writeFileSync(tmp, JSON.stringify(payload));
-        const selects = buildTwoPermissionSelects(`rolep:sel:${mode}:${roleId}`, payloadKey);
+
+        const { rows, allBtnRow } = buildPermissionSelects(`rolep:sel:${mode}:${roleId}`, payloadKey, 'role');
         const previewRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Preview').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        const embed = new EmbedBuilder().setTitle(`Select Permissions — ${mode.toUpperCase()}`).setDescription('Choose permissions across both lists, then click Preview').setColor(0x2b2d31);
-        return await safeRespond(interaction, { embeds: [embed], components: [...selects, previewRow] });
+        const embed = new EmbedBuilder().setTitle(`Select Permissions — ${mode.toUpperCase()}`).setDescription('Choose permissions across the lists (3). Use "All Permissions" to pick all. Then click Preview.').setColor(0x2b2d31);
+        return await safeRespond(interaction, { embeds: [embed], components: [allBtnRow, ...rows, previewRow] });
       }
 
+      // channel perms role select (when adding role overwrite)
       if (cid.startsWith('chanp:select_role:')) {
         const parts = cid.split(':');
         const action = parts[2];
         const channelId = parts[3];
         const roleId = interaction.values[0];
-        const payloadKey = `payload-${Date.now()}-${Math.floor(Math.random()*10000)}`;
+        const payloadKey = `payload-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        const payload = { channelId, targetId: roleId, action, selections: {} };
+        const payload = { channelId, targetId: roleId, action, selections: {}, context: 'channel' };
         fs.writeFileSync(tmp, JSON.stringify(payload));
-        const selects = buildTwoPermissionSelects(`chanp:sel:${channelId}:${roleId}`, payloadKey);
+
+        const { rows, allBtnRow } = buildPermissionSelects(`chanp:sel:${channelId}:${roleId}`, payloadKey, 'channel');
         const previewRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`chanp:preview:${payloadKey}`).setLabel('Preview').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId('common:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        const embed = new EmbedBuilder().setTitle('Select channel permissions').setDescription('Choose permissions across both lists, then Preview').setColor(0x2b2d31);
-        return await safeRespond(interaction, { embeds: [embed], components: [...selects, previewRow] });
+        const embed = new EmbedBuilder().setTitle('Select channel permissions').setDescription('Choose permissions across the lists (3). Use "All Permissions" to pick all. Then Preview.').setColor(0x2b2d31);
+        return await safeRespond(interaction, { embeds: [embed], components: [allBtnRow, ...rows, previewRow] });
       }
     }
 
-    // String select menus (permissions)
+    // String select menus (permissions) — store selections for part a|b|c
     if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
       const cid = interaction.customId;
       const parts = cid.split(':');
+      // format: <base>:<part>:<payloadKey> where part is a/b/c
       if (parts.length >= 3) {
-        const part = parts[parts.length - 2]; // 'a' or 'b'
+        const part = parts[parts.length - 2]; // 'a' or 'b' or 'c'
         const payloadKey = parts[parts.length - 1];
         persistSelections(payloadKey, part, interaction.values);
         const total = (interaction.values || []).length;
@@ -354,7 +363,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // Channel select menu
+    // Channel select menu (choose channel)
     if (interaction.isChannelSelectMenu && interaction.isChannelSelectMenu()) {
       const cid = interaction.customId;
       if (cid === 'chanp:select_channel') {
@@ -372,7 +381,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // chanp action buttons (view/addrole/addmember/change)
+    // chanp action button handling (view/addrole/addmember/change)
     if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
       if (id.startsWith('chanp:action:')) {
