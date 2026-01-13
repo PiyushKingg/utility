@@ -1,84 +1,144 @@
 const { PermissionsBitField } = require('discord.js');
 
-const defs = [
-  { key: 'CreateInvite', label: 'Create Invite', flag: PermissionsBitField.Flags.CreateInstantInvite || 0n },
-  { key: 'KickMembers', label: 'Kick Members', flag: PermissionsBitField.Flags.KickMembers || 0n },
-  { key: 'BanMembers', label: 'Ban Members', flag: PermissionsBitField.Flags.BanMembers || 0n },
-  { key: 'Administrator', label: 'Administrator', flag: PermissionsBitField.Flags.Administrator || 0n },
-  { key: 'ManageChannels', label: 'Manage Channels', flag: PermissionsBitField.Flags.ManageChannels || 0n },
-  { key: 'ManageRoles', label: 'Manage Roles', flag: PermissionsBitField.Flags.ManageRoles || 0n },
-  { key: 'CreateExpressions', label: 'Create Expressions', flag: PermissionsBitField.Flags.UseExternalApps || 0n },
-  { key: 'ManageExpressions', label: 'Manage Expressions', flag: PermissionsBitField.Flags.ManageEmojisAndStickers || 0n },
-  { key: 'ViewAuditLog', label: 'View Audit Log', flag: PermissionsBitField.Flags.ViewAuditLog || 0n },
-  { key: 'ViewGuildInsights', label: 'View Server Insights', flag: PermissionsBitField.Flags.ViewGuildInsights || 0n },
-  { key: 'ManageWebhooks', label: 'Manage Webhooks', flag: PermissionsBitField.Flags.ManageWebhooks || 0n },
-  { key: 'ManageGuild', label: 'Manage Server', flag: PermissionsBitField.Flags.ManageGuild || 0n },
-  { key: 'CreateInviteAlt', label: 'Create Invite', flag: PermissionsBitField.Flags.CreateInstantInvite || 0n },
-  { key: 'ChangeNickname', label: 'Change Nickname', flag: PermissionsBitField.Flags.ChangeNickname || 0n },
-  { key: 'ManageNicknames', label: 'Manage Nickname', flag: PermissionsBitField.Flags.ManageNicknames || 0n },
-  { key: 'KickApproveReject', label: 'Kick, Approve, and Reject Members', flag: PermissionsBitField.Flags.KickMembers || 0n },
-  { key: 'BanMembers2', label: 'Ban Members (alt)', flag: PermissionsBitField.Flags.BanMembers || 0n },
-  { key: 'ModerateMembers', label: 'Timeout Members', flag: PermissionsBitField.Flags.ModerateMembers || 0n },
-  { key: 'SendMessages', label: 'Send Messages & Create Posts', flag: PermissionsBitField.Flags.SendMessages || 0n },
-  { key: 'SendMessagesInThreads', label: 'Send Messages in Thread & Posts', flag: PermissionsBitField.Flags.SendMessagesInThreads || 0n },
-  { key: 'CreatePublicThreads', label: 'Create Public Thread', flag: PermissionsBitField.Flags.CreatePublicThreads || 0n },
-  { key: 'CreatePrivateThreads', label: 'Create Private Thread', flag: PermissionsBitField.Flags.CreatePrivateThreads || 0n },
-  { key: 'EmbedLinks', label: 'Embed Links', flag: PermissionsBitField.Flags.EmbedLinks || 0n },
-  { key: 'AttachFiles', label: 'Attach Files', flag: PermissionsBitField.Flags.AttachFiles || 0n },
-  { key: 'AddReactions', label: 'Add Reactions', flag: PermissionsBitField.Flags.AddReactions || 0n },
-  { key: 'UseExternalEmojis', label: 'Use External Emojis', flag: PermissionsBitField.Flags.UseExternalEmojis || 0n },
-  { key: 'UseExternalStickers', label: 'Use External Stickers', flag: PermissionsBitField.Flags.UseExternalStickers || 0n },
-  { key: 'MentionEveryone', label: 'Mention @everyone / @here / Roles', flag: PermissionsBitField.Flags.MentionEveryone || 0n },
-  { key: 'ManageMessages', label: 'Manage Messages', flag: PermissionsBitField.Flags.ManageMessages || 0n },
-  { key: 'PinMessages', label: 'Pin Messages', flag: PermissionsBitField.Flags.ManageMessages || 0n },
-  { key: 'BypassSlowmode', label: 'Bypass Slowmode', flag: PermissionsBitField.Flags.ModerateMembers || 0n },
-  { key: 'ManageThreads', label: 'Manage Threads & Posts', flag: PermissionsBitField.Flags.ManageThreads || 0n },
-  { key: 'ReadMessageHistory', label: 'Read Message History', flag: PermissionsBitField.Flags.ReadMessageHistory || 0n },
-  { key: 'SendTTSMessages', label: 'Send Text-to-Speech Messages', flag: PermissionsBitField.Flags.SendTTSMessages || 0n },
-  { key: 'SendVoiceMessages', label: 'Send Voice Messages', flag: 0n },
-  { key: 'CreatePolls', label: 'Create Polls', flag: 0n },
-  { key: 'Connect', label: 'Connect', flag: PermissionsBitField.Flags.Connect || 0n },
-  { key: 'Speak', label: 'Speak', flag: PermissionsBitField.Flags.Speak || 0n },
-  { key: 'Video', label: 'Video', flag: PermissionsBitField.Flags.Stream || 0n },
-  { key: 'UseSoundboard', label: 'Use Soundboard', flag: 0n },
-  { key: 'UseExternalSounds', label: 'Use External Sounds', flag: 0n },
-  { key: 'UseVAD', label: 'Use Voice Activity', flag: PermissionsBitField.Flags.UseVAD || 0n },
-  { key: 'PrioritySpeaker', label: 'Priority Speaker', flag: PermissionsBitField.Flags.PrioritySpeaker || 0n },
-  { key: 'MuteMembers', label: 'Mute Members', flag: PermissionsBitField.Flags.MuteMembers || 0n },
-  { key: 'DeafenMembers', label: 'Deafen Members', flag: PermissionsBitField.Flags.DeafenMembers || 0n },
-  { key: 'MoveMembers', label: 'Move Members', flag: PermissionsBitField.Flags.MoveMembers || 0n },
-  { key: 'SetVoiceChannelStatus', label: 'Set Voice Channel Status', flag: PermissionsBitField.Flags.ManageChannels || 0n },
-  { key: 'UseApplicationCommands', label: 'Use Application Commands', flag: PermissionsBitField.Flags.UseApplicationCommands || 0n },
-  { key: 'UseActivities', label: 'Use Activities', flag: PermissionsBitField.Flags.StartEmbeddedActivities || PermissionsBitField.Flags.UseExternalApps || 0n },
-  { key: 'UseExternalApps', label: 'Use External Apps', flag: PermissionsBitField.Flags.UseExternalApps || 0n },
-  { key: 'RequestToSpeak', label: 'Request To Speak', flag: PermissionsBitField.Flags.RequestToSpeak || 0n },
-  { key: 'CreateEvents', label: 'Create Events', flag: PermissionsBitField.Flags.CreateInstantInvite || 0n },
-  { key: 'ManageEvents', label: 'Manage Events', flag: PermissionsBitField.Flags.ManageEvents || 0n },
-  { key: 'ManageThreads2', label: 'Manage Threads', flag: PermissionsBitField.Flags.ManageThreads || 0n }
-];
-
-const PERM_DEFS = defs;
-const PERM_MAP = {};
-let ALL_FLAGS = 0n;
-for (const d of PERM_DEFS) {
-  PERM_MAP[d.key] = d;
-  try { ALL_FLAGS |= BigInt(d.flag || 0n); } catch {}
+function flagSafe(flag) {
+  try { return BigInt(flag || 0n); } catch { return 0n; }
 }
 
-const half = Math.ceil(PERM_DEFS.length / 2);
-const PERM_SELECT_A = PERM_DEFS.slice(0, half);
-const PERM_SELECT_B = PERM_DEFS.slice(half);
+// --- ROLE PERMISSIONS (exact order from your list) ---
+const ROLE_PERMS = [
+  { key: 'ViewChannels', label: 'View Channels', flag: flagSafe(PermissionsBitField.Flags.ViewChannel) },
+  { key: 'ManageChannels', label: 'Manage Channels', flag: flagSafe(PermissionsBitField.Flags.ManageChannels) },
+  { key: 'ManageRoles', label: 'Manage Roles', flag: flagSafe(PermissionsBitField.Flags.ManageRoles) },
+  { key: 'CreateExpressions', label: 'Create Expressions', flag: flagSafe(0n) },
+  { key: 'ManageExpressions', label: 'Manage Expressions', flag: flagSafe(0n) },
+  { key: 'ViewAuditLog', label: 'View Audit Log', flag: flagSafe(PermissionsBitField.Flags.ViewAuditLog) },
+  { key: 'ViewServerInsights', label: 'View Server Insights', flag: flagSafe(PermissionsBitField.Flags.ViewGuildInsights) },
+  { key: 'ManageWebhooks', label: 'Manage Webhooks', flag: flagSafe(PermissionsBitField.Flags.ManageWebhooks) },
+  { key: 'ManageServer', label: 'Manage Server', flag: flagSafe(PermissionsBitField.Flags.ManageGuild) },
+  { key: 'CreateInvite', label: 'Create Invite', flag: flagSafe(PermissionsBitField.Flags.CreateInstantInvite) },
+  { key: 'ChangeNickname', label: 'Change Nickname', flag: flagSafe(PermissionsBitField.Flags.ChangeNickname) },
+  { key: 'ManageNickname', label: 'Manage Nickname', flag: flagSafe(PermissionsBitField.Flags.ManageNicknames) },
+  { key: 'KickApproveRejectMembers', label: 'Kick, Approve, and Reject Members', flag: flagSafe(PermissionsBitField.Flags.KickMembers) },
+  { key: 'BanMembers', label: 'Ban Members', flag: flagSafe(PermissionsBitField.Flags.BanMembers) },
+  { key: 'TimeoutMembers', label: 'Timeout Members', flag: flagSafe(PermissionsBitField.Flags.ModerateMembers) },
+  { key: 'SendMessagesCreatePosts', label: 'Send Messages and Create Posts', flag: flagSafe(PermissionsBitField.Flags.SendMessages) },
+  { key: 'SendMessagesInThreadAndPosts', label: 'Send Messages in Thread and Posts', flag: flagSafe(PermissionsBitField.Flags.SendMessagesInThreads) },
+  { key: 'CreatePublicThread', label: 'Create Public Thread', flag: flagSafe(PermissionsBitField.Flags.CreatePublicThreads) },
+  { key: 'CreatePrivateThread', label: 'Create private Thread', flag: flagSafe(PermissionsBitField.Flags.CreatePrivateThreads) },
+  { key: 'EmbedLinks', label: 'Embed Links', flag: flagSafe(PermissionsBitField.Flags.EmbedLinks) },
+  { key: 'AttachFiles', label: 'Attach Files', flag: flagSafe(PermissionsBitField.Flags.AttachFiles) },
+  { key: 'AddReactions', label: 'Add Reactions', flag: flagSafe(PermissionsBitField.Flags.AddReactions) },
+  { key: 'UseExternalEmojis', label: 'Use External Emojis', flag: flagSafe(PermissionsBitField.Flags.UseExternalEmojis) },
+  { key: 'UseExternalStickers', label: 'Use External Stickers', flag: flagSafe(PermissionsBitField.Flags.UseExternalStickers) },
+  { key: 'MentionEveryone', label: 'Mention @everyone, @here, and All Roles', flag: flagSafe(PermissionsBitField.Flags.MentionEveryone) },
+  { key: 'ManageMessages', label: 'Manage Messages', flag: flagSafe(PermissionsBitField.Flags.ManageMessages) },
+  { key: 'PinMessages', label: 'Pin Messages', flag: flagSafe(PermissionsBitField.Flags.ManageMessages) }, // reuse if explicit flag missing
+  { key: 'BypassSlowmode', label: 'Bypass Slowmode', flag: flagSafe(PermissionsBitField.Flags.ModerateMembers) },
+  { key: 'ManageThreadsAndPosts', label: 'Manage Threads and Posts', flag: flagSafe(PermissionsBitField.Flags.ManageThreads) },
+  { key: 'ReadMessageHistory', label: 'Read Message History', flag: flagSafe(PermissionsBitField.Flags.ReadMessageHistory) },
+  { key: 'SendTTSMessages', label: 'Send Text-to-Speech Messages', flag: flagSafe(PermissionsBitField.Flags.SendTTSMessages) },
+  { key: 'SendVoiceMessages', label: 'Send Voice Messages', flag: flagSafe(0n) },
+  { key: 'CreatePolls', label: 'Create Polls', flag: flagSafe(0n) },
+  { key: 'Connect', label: 'Connect', flag: flagSafe(PermissionsBitField.Flags.Connect) },
+  { key: 'Speak', label: 'Speak', flag: flagSafe(PermissionsBitField.Flags.Speak) },
+  { key: 'Video', label: 'Video', flag: flagSafe(PermissionsBitField.Flags.Stream) },
+  { key: 'UseSoundboard', label: 'Use Soundboard', flag: flagSafe(0n) },
+  { key: 'UseExternalSounds', label: 'Use External Sounds', flag: flagSafe(0n) },
+  { key: 'UseVoiceActivity', label: 'Use Voice Activity', flag: flagSafe(PermissionsBitField.Flags.UseVAD) },
+  { key: 'PrioritySpeaker', label: 'Priority Speaker', flag: flagSafe(PermissionsBitField.Flags.PrioritySpeaker) },
+  { key: 'MuteMembers', label: 'Mute Members', flag: flagSafe(PermissionsBitField.Flags.MuteMembers) },
+  { key: 'DeafenMembers', label: 'Deafen Members', flag: flagSafe(PermissionsBitField.Flags.DeafenMembers) },
+  { key: 'MoveMembers', label: 'Move Members', flag: flagSafe(PermissionsBitField.Flags.MoveMembers) },
+  { key: 'SetVoiceChannelStatus', label: 'Set Voice Channel Status', flag: flagSafe(PermissionsBitField.Flags.ManageChannels) },
+  { key: 'UseApplicationCommands', label: 'Use Application Commands', flag: flagSafe(PermissionsBitField.Flags.UseApplicationCommands) },
+  { key: 'UseActivities', label: 'Use Activities', flag: flagSafe(PermissionsBitField.Flags.StartEmbeddedActivities || PermissionsBitField.Flags.UseExternalApps) },
+  { key: 'UseExternalApps', label: 'Use External Apps', flag: flagSafe(PermissionsBitField.Flags.UseExternalApps) },
+  { key: 'RequestToSpeak', label: 'Request To Speak', flag: flagSafe(PermissionsBitField.Flags.RequestToSpeak) },
+  { key: 'CreateEvents', label: 'Create Events', flag: flagSafe(PermissionsBitField.Flags.CreateInstantInvite) },
+  { key: 'ManageEvents', label: 'Manage Events', flag: flagSafe(PermissionsBitField.Flags.ManageEvents) },
+  { key: 'Administrator', label: 'Administrator', flag: flagSafe(PermissionsBitField.Flags.Administrator) }
+];
 
-function nameToFlag(key) {
-  const ent = PERM_MAP[key];
-  if (!ent) return 0n;
-  try { return BigInt(ent.flag || 0n); } catch { return 0n; }
+// --- CHANNEL PERMISSIONS (exact order from your list) ---
+const CHANNEL_PERMS = [
+  { key: 'ViewChannel', label: 'View Channel', flag: flagSafe(PermissionsBitField.Flags.ViewChannel) },
+  { key: 'ManageChannel', label: 'Manage Channel', flag: flagSafe(PermissionsBitField.Flags.ManageChannels) },
+  { key: 'ManagePermissions', label: 'Manage Permissions', flag: flagSafe(PermissionsBitField.Flags.ManageRoles) },
+  { key: 'ManageWebhooksChannel', label: 'Manage Webhooks', flag: flagSafe(PermissionsBitField.Flags.ManageWebhooks) },
+  { key: 'CreateInviteChannel', label: 'Create Invite', flag: flagSafe(PermissionsBitField.Flags.CreateInstantInvite) },
+  { key: 'SendMessages', label: 'Send Messages', flag: flagSafe(PermissionsBitField.Flags.SendMessages) },
+  { key: 'SendMessagesInThreads', label: 'Send Messages In Threads', flag: flagSafe(PermissionsBitField.Flags.SendMessagesInThreads) },
+  { key: 'CreatePublicThread', label: 'Create Public Thread', flag: flagSafe(PermissionsBitField.Flags.CreatePublicThreads) },
+  { key: 'CreatePrivateThread', label: 'Create Private Thread', flag: flagSafe(PermissionsBitField.Flags.CreatePrivateThreads) },
+  { key: 'EmbedLink', label: 'Embed Link', flag: flagSafe(PermissionsBitField.Flags.EmbedLinks) },
+  { key: 'AttachFiles', label: 'Attach Files', flag: flagSafe(PermissionsBitField.Flags.AttachFiles) },
+  { key: 'AddReactions', label: 'Add Reactions', flag: flagSafe(PermissionsBitField.Flags.AddReactions) },
+  { key: 'UseExternalEmojis', label: 'Use External Emojis', flag: flagSafe(PermissionsBitField.Flags.UseExternalEmojis) },
+  { key: 'UseExternalStickers', label: 'Use External Stickers', flag: flagSafe(PermissionsBitField.Flags.UseExternalStickers) },
+  { key: 'MentionEveryone', label: 'Mention @everyone, @here, and All Roles', flag: flagSafe(PermissionsBitField.Flags.MentionEveryone) },
+  { key: 'ManageRoles', label: 'Manage Roles (channel-level)', flag: flagSafe(PermissionsBitField.Flags.ManageRoles) },
+  { key: 'PinMessages', label: 'Pin Messages', flag: flagSafe(PermissionsBitField.Flags.ManageMessages) },
+  { key: 'BypassSlowmode', label: 'Bypass Slowmode', flag: flagSafe(PermissionsBitField.Flags.ModerateMembers) },
+  { key: 'ManageThreads', label: 'Manage Threads', flag: flagSafe(PermissionsBitField.Flags.ManageThreads) },
+  { key: 'ReadMessageHistory', label: 'Read Message History', flag: flagSafe(PermissionsBitField.Flags.ReadMessageHistory) },
+  { key: 'SendTTSMessages', label: 'Send Text-to-Speech Messages', flag: flagSafe(PermissionsBitField.Flags.SendTTSMessages) },
+  { key: 'SendVoiceMessages', label: 'Send Voice Messages', flag: flagSafe(0n) },
+  { key: 'CreatePolls', label: 'Create Polls', flag: flagSafe(0n) },
+  { key: 'UseApplicationCommands', label: 'Use Application Commands', flag: flagSafe(PermissionsBitField.Flags.UseApplicationCommands) },
+  { key: 'UseActivities', label: 'Use Activities', flag: flagSafe(PermissionsBitField.Flags.StartEmbeddedActivities || PermissionsBitField.Flags.UseExternalApps) },
+  { key: 'UseExternalApps', label: 'Use External Apps', flag: flagSafe(PermissionsBitField.Flags.UseExternalApps) }
+];
+
+// Build lookup maps and ALL flags
+const ROLE_MAP = {};
+const CHANNEL_MAP = {};
+let ROLE_ALL_FLAGS = 0n;
+let CHANNEL_ALL_FLAGS = 0n;
+
+for (const p of ROLE_PERMS) {
+  ROLE_MAP[p.key] = p;
+  ROLE_ALL_FLAGS |= BigInt(p.flag || 0n);
+}
+for (const p of CHANNEL_PERMS) {
+  CHANNEL_MAP[p.key] = p;
+  CHANNEL_ALL_FLAGS |= BigInt(p.flag || 0n);
+}
+
+// split into 3 roughly equal parts for selects (keeps ordering)
+function splitIntoThree(arr) {
+  const third = Math.ceil(arr.length / 3);
+  return [arr.slice(0, third), arr.slice(third, third * 2), arr.slice(third * 2)];
+}
+
+const ROLE_SELECT_PARTS = splitIntoThree(ROLE_PERMS);
+const CHANNEL_SELECT_PARTS = splitIntoThree(CHANNEL_PERMS);
+
+function nameToFlag(key, context = 'role') {
+  if (context === 'role') return ROLE_MAP[key] ? BigInt(ROLE_MAP[key].flag || 0n) : 0n;
+  return CHANNEL_MAP[key] ? BigInt(CHANNEL_MAP[key].flag || 0n) : 0n;
+}
+
+function permsForContext(context = 'role') {
+  return context === 'role' ? ROLE_PERMS : CHANNEL_PERMS;
+}
+
+function partsForContext(context = 'role') {
+  return context === 'role' ? ROLE_SELECT_PARTS : CHANNEL_SELECT_PARTS;
+}
+
+function allFlagsForContext(context = 'role') {
+  return context === 'role' ? ROLE_ALL_FLAGS : CHANNEL_ALL_FLAGS;
 }
 
 module.exports = {
-  PERM_DEFS,
-  PERM_SELECT_A,
-  PERM_SELECT_B,
+  ROLE_PERMS,
+  CHANNEL_PERMS,
+  ROLE_MAP,
+  CHANNEL_MAP,
+  ROLE_SELECT_PARTS,
+  CHANNEL_SELECT_PARTS,
   nameToFlag,
-  ALL_FLAGS
+  permsForContext,
+  partsForContext,
+  allFlagsForContext
 };
