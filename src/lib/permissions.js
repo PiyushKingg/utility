@@ -1,96 +1,149 @@
-// src/lib/permissions.js
 const { PermissionsBitField } = require('discord.js');
 
-// Exhaustive-ish mapping of permission keys to PermissionsBitField flags.
 const PERMS_MAP = {
+  // Role permissions (best-effort mapping)
+  ViewChannel: PermissionsBitField.Flags.ViewChannel,
+  ManageChannels: PermissionsBitField.Flags.ManageChannels,
+  ManageRoles: PermissionsBitField.Flags.ManageRoles,
+  CreateExpressions: PermissionsBitField.Flags.UseExternalApps || 0n, // no exact match; map to use apps
+  ManageExpressions: PermissionsBitField.Flags.ManageEmojisAndStickers || 0n, // best-effort
+  ViewAuditLog: PermissionsBitField.Flags.ViewAuditLog,
+  ViewGuildInsights: PermissionsBitField.Flags.ViewGuildInsights || 0n,
+  ManageWebhooks: PermissionsBitField.Flags.ManageWebhooks,
+  ManageGuild: PermissionsBitField.Flags.ManageGuild,
   CreateInstantInvite: PermissionsBitField.Flags.CreateInstantInvite,
+  ChangeNickname: PermissionsBitField.Flags.ChangeNickname,
+  ManageNicknames: PermissionsBitField.Flags.ManageNicknames,
   KickMembers: PermissionsBitField.Flags.KickMembers,
   BanMembers: PermissionsBitField.Flags.BanMembers,
-  Administrator: PermissionsBitField.Flags.Administrator,
-  ManageChannels: PermissionsBitField.Flags.ManageChannels,
-  ManageGuild: PermissionsBitField.Flags.ManageGuild,
-  AddReactions: PermissionsBitField.Flags.AddReactions,
-  ViewAuditLog: PermissionsBitField.Flags.ViewAuditLog,
-  PrioritySpeaker: PermissionsBitField.Flags.PrioritySpeaker,
-  Stream: PermissionsBitField.Flags.Stream,
-  ViewChannel: PermissionsBitField.Flags.ViewChannel,
+  ModerateMembers: PermissionsBitField.Flags.ModerateMembers, // timeout members
   SendMessages: PermissionsBitField.Flags.SendMessages,
-  SendTTSMessages: PermissionsBitField.Flags.SendTTSMessages,
-  ManageMessages: PermissionsBitField.Flags.ManageMessages,
+  SendMessagesInThreads: PermissionsBitField.Flags.SendMessagesInThreads,
+  CreatePublicThreads: PermissionsBitField.Flags.CreatePublicThreads,
+  CreatePrivateThreads: PermissionsBitField.Flags.CreatePrivateThreads,
   EmbedLinks: PermissionsBitField.Flags.EmbedLinks,
   AttachFiles: PermissionsBitField.Flags.AttachFiles,
-  ReadMessageHistory: PermissionsBitField.Flags.ReadMessageHistory,
-  MentionEveryone: PermissionsBitField.Flags.MentionEveryone,
+  AddReactions: PermissionsBitField.Flags.AddReactions,
   UseExternalEmojis: PermissionsBitField.Flags.UseExternalEmojis,
-  ViewGuildInsights: PermissionsBitField.Flags.ViewGuildInsights,
+  UseExternalStickers: PermissionsBitField.Flags.UseExternalStickers,
+  MentionEveryone: PermissionsBitField.Flags.MentionEveryone,
+  ManageMessages: PermissionsBitField.Flags.ManageMessages,
+  PinMessages: PermissionsBitField.Flags.ManageMessages, // no separate flag; reuse ManageMessages
+  BypassSlowmode: PermissionsBitField.Flags.ModerateMembers || 0n, // no exact flag; fallback to moderate (best-effort)
+  ManageThreads: PermissionsBitField.Flags.ManageThreads,
+  ReadMessageHistory: PermissionsBitField.Flags.ReadMessageHistory,
+  SendTTSMessages: PermissionsBitField.Flags.SendTTSMessages,
+  SendVoiceMessages: 0n, // not a permissions flag (client-level)
+  CreatePolls: 0n, // no direct flag
   Connect: PermissionsBitField.Flags.Connect,
   Speak: PermissionsBitField.Flags.Speak,
+  Video: PermissionsBitField.Flags.Stream || 0n,
+  UseSoundboard: 0n,
+  UseExternalSounds: 0n,
+  UseVAD: PermissionsBitField.Flags.UseVAD,
+  PrioritySpeaker: PermissionsBitField.Flags.PrioritySpeaker,
   MuteMembers: PermissionsBitField.Flags.MuteMembers,
   DeafenMembers: PermissionsBitField.Flags.DeafenMembers,
   MoveMembers: PermissionsBitField.Flags.MoveMembers,
-  UseVAD: PermissionsBitField.Flags.UseVAD,
-  ChangeNickname: PermissionsBitField.Flags.ChangeNickname,
-  ManageNicknames: PermissionsBitField.Flags.ManageNicknames,
-  ManageRoles: PermissionsBitField.Flags.ManageRoles,
-  ManageWebhooks: PermissionsBitField.Flags.ManageWebhooks,
-  ManageEmojisAndStickers: PermissionsBitField.Flags.ManageEmojisAndStickers,
+  SetVoiceChannelStatus: PermissionsBitField.Flags.ManageChannels || 0n,
   UseApplicationCommands: PermissionsBitField.Flags.UseApplicationCommands,
-  RequestToSpeak: PermissionsBitField.Flags.RequestToSpeak,
-  ManageEvents: PermissionsBitField.Flags.ManageEvents,
-  ManageThreads: PermissionsBitField.Flags.ManageThreads,
-  CreatePublicThreads: PermissionsBitField.Flags.CreatePublicThreads,
-  CreatePrivateThreads: PermissionsBitField.Flags.CreatePrivateThreads,
-  UseExternalStickers: PermissionsBitField.Flags.UseExternalStickers,
-  SendMessagesInThreads: PermissionsBitField.Flags.SendMessagesInThreads,
-  StartEmbeddedActivities: PermissionsBitField.Flags.StartEmbeddedActivities ?? 0n,
-  ModerateMembers: PermissionsBitField.Flags.ModerateMembers
+  UseActivities: PermissionsBitField.Flags.StartEmbeddedActivities || PermissionsBitField.Flags.UseExternalApps || 0n,
+  UseExternalApps: PermissionsBitField.Flags.UseExternalApps || 0n,
+  RequestToSpeak: PermissionsBitField.Flags.RequestToSpeak || 0n,
+  CreateEvents: PermissionsBitField.Flags.CreateInstantInvite || 0n, // no exact flag; approximate
+  ManageEvents: PermissionsBitField.Flags.ManageEvents || 0n,
+  Administrator: PermissionsBitField.Flags.Administrator
 };
 
-// Human-friendly options for select menus (label -> key)
-const PERM_OPTIONS = [
+// The ordered list of permission options, in the exact order you provided, with display labels.
+// The `value` matches a key in PERMS_MAP. This list will be paginated in the UI.
+const PERM_OPTIONS_FULL = [
   { label: 'View Channels', value: 'ViewChannel' },
   { label: 'Manage Channels', value: 'ManageChannels' },
   { label: 'Manage Roles', value: 'ManageRoles' },
-  { label: 'Create Instant Invite', value: 'CreateInstantInvite' },
-  { label: 'Manage Server (Guild)', value: 'ManageGuild' },
-  { label: 'Kick Members', value: 'KickMembers' },
-  { label: 'Ban Members', value: 'BanMembers' },
-  { label: 'Administrator', value: 'Administrator' },
-  { label: 'Add Reactions', value: 'AddReactions' },
+  { label: 'Create Expressions', value: 'CreateExpressions' },
+  { label: 'Manage Expressions', value: 'ManageExpressions' },
   { label: 'View Audit Log', value: 'ViewAuditLog' },
-  { label: 'Priority Speaker', value: 'PrioritySpeaker' },
-  { label: 'Send Messages', value: 'SendMessages' },
-  { label: 'Send TTS Messages', value: 'SendTTSMessages' },
-  { label: 'Manage Messages', value: 'ManageMessages' },
+  { label: 'View Server Insights', value: 'ViewGuildInsights' },
+  { label: 'Manage Webhooks', value: 'ManageWebhooks' },
+  { label: 'Manage Server', value: 'ManageGuild' },
+  { label: 'Create Invite', value: 'CreateInstantInvite' },
+  { label: 'Change Nickname', value: 'ChangeNickname' },
+  { label: 'Manage Nickname', value: 'ManageNicknames' },
+  { label: 'Kick, Approve, and Reject Members', value: 'KickMembers' },
+  { label: 'Ban Members', value: 'BanMembers' },
+  { label: 'Timeout Members', value: 'ModerateMembers' },
+  { label: 'Send Messages and Create Posts', value: 'SendMessages' },
+  { label: 'Send Messages in Thread and Posts', value: 'SendMessagesInThreads' },
+  { label: 'Create Public Thread', value: 'CreatePublicThreads' },
+  { label: 'Create private Thread', value: 'CreatePrivateThreads' },
   { label: 'Embed Links', value: 'EmbedLinks' },
   { label: 'Attach Files', value: 'AttachFiles' },
-  { label: 'Read Message History', value: 'ReadMessageHistory' },
-  { label: 'Mention Everyone (@everyone)', value: 'MentionEveryone' },
+  { label: 'Add Reactions', value: 'AddReactions' },
   { label: 'Use External Emojis', value: 'UseExternalEmojis' },
-  { label: 'View Server Insights', value: 'ViewGuildInsights' },
-  { label: 'Connect (Voice)', value: 'Connect' },
-  { label: 'Speak (Voice)', value: 'Speak' },
+  { label: 'Use External Stickers', value: 'UseExternalStickers' },
+  { label: 'Mention @everyone, @here, and All Roles', value: 'MentionEveryone' },
+  { label: 'Manage Messages', value: 'ManageMessages' },
+  { label: 'Pin Messages', value: 'PinMessages' },
+  { label: 'Bypass Slowmode', value: 'BypassSlowmode' },
+  { label: 'Manage Threads and Posts', value: 'ManageThreads' },
+  { label: 'Read Message History', value: 'ReadMessageHistory' },
+  { label: 'Send Text-to-Speech Messages', value: 'SendTTSMessages' },
+  { label: 'Send Voice Messages', value: 'SendVoiceMessages' },
+  { label: 'Create Polls', value: 'CreatePolls' },
+  { label: 'Connect', value: 'Connect' },
+  { label: 'Speak', value: 'Speak' },
+  { label: 'Video', value: 'Video' },
+  { label: 'Use Soundboard', value: 'UseSoundboard' },
+  { label: 'Use External Sounds', value: 'UseExternalSounds' },
+  { label: 'Use Voice Activity', value: 'UseVAD' },
+  { label: 'Priority Speaker', value: 'PrioritySpeaker' },
   { label: 'Mute Members', value: 'MuteMembers' },
   { label: 'Deafen Members', value: 'DeafenMembers' },
   { label: 'Move Members', value: 'MoveMembers' },
-  { label: 'Use Voice Activity', value: 'UseVAD' },
-  { label: 'Change Nickname', value: 'ChangeNickname' },
-  { label: 'Manage Nicknames', value: 'ManageNicknames' },
-  { label: 'Manage Webhooks', value: 'ManageWebhooks' },
-  { label: 'Manage Emojis & Stickers', value: 'ManageEmojisAndStickers' },
+  { label: 'Set Voice Channel Status', value: 'SetVoiceChannelStatus' },
   { label: 'Use Application Commands', value: 'UseApplicationCommands' },
+  { label: 'Use Activities', value: 'UseActivities' },
+  { label: 'Use External Apps', value: 'UseExternalApps' },
   { label: 'Request To Speak', value: 'RequestToSpeak' },
+  { label: 'Create Events', value: 'CreateEvents' },
   { label: 'Manage Events', value: 'ManageEvents' },
-  { label: 'Manage Threads', value: 'ManageThreads' },
-  { label: 'Create Public Threads', value: 'CreatePublicThreads' },
-  { label: 'Create Private Threads', value: 'CreatePrivateThreads' },
-  { label: 'Use External Stickers', value: 'UseExternalStickers' },
-  { label: 'Send Messages in Threads', value: 'SendMessagesInThreads' },
-  { label: 'Moderate Members (Timeout)', value: 'ModerateMembers' }
+  { label: 'Administrator', value: 'Administrator' }
 ];
 
-function nameToFlag(name) {
-  return PERMS_MAP[name] ?? 0n;
+// For convenience compute ALL_FLAGS (bitwise OR of all non-zero mapped flags)
+let ALL_FLAGS = 0n;
+for (const key of Object.keys(PERMS_MAP)) {
+  try {
+    const f = BigInt(PERMS_MAP[key] || 0n);
+    ALL_FLAGS = ALL_FLAGS | f;
+  } catch {
+    // ignore
+  }
 }
 
-module.exports = { PERMS_MAP, PERM_OPTIONS, nameToFlag };
+// helper to get flag for a key
+function nameToFlag(name) {
+  if (!name) return 0n;
+  const val = PERMS_MAP[name];
+  if (!val) return 0n;
+  // Ensure BigInt
+  try { return BigInt(val); } catch { return 0n; }
+}
+
+// Expose a paginated helper to slice the full options into pages of at most 23 items
+// (we reserve 1 slot for "All Permissions" and possibly 1 for "More...").
+function getPermPage(pageIndex, pageSize = 23) {
+  const start = pageIndex * pageSize;
+  const slice = PERM_OPTIONS_FULL.slice(start, start + pageSize);
+  const hasMore = start + pageSize < PERM_OPTIONS_FULL.length;
+  return { options: slice, hasMore };
+}
+
+module.exports = {
+  PERMS_MAP,
+  PERM_OPTIONS_FULL,
+  getPermPage,
+  nameToFlag,
+  ALL_FLAGS
+};
