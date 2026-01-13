@@ -16,22 +16,65 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// helper to respond/update safely
+/**
+ * safeRespond(interaction, payload)
+ * - Handles ChatInputCommandInteraction and MessageComponentInteraction robustly.
+ * - Prefers update() for components when the interaction hasn't been acknowledged.
+ * - Falls back to editReply()/followUp() when needed.
+ * - Catches known Discord API errors and attempts a safe fallback instead of throwing.
+ */
 async function safeRespond(interaction, payload) {
   try {
-    if (interaction.update) {
-      try { return await interaction.update(payload); } catch (e) {}
+    // If it's a component interaction (buttons/selects)
+    if (interaction.isMessageComponent && interaction.isMessageComponent()) {
+      // If nothing has been acknowledged yet, try update()
+      if (!interaction.deferred && !interaction.replied) {
+        try { return await interaction.update(payload); } catch (err) {
+          // If update fails, continue to fallback logic below
+        }
+      }
+      // If the interaction was deferred earlier, edit the deferred reply
+      if (interaction.deferred) {
+        try { return await interaction.editReply(payload); } catch (err) { /* fallthrough */ }
+      }
+      // If we've already replied, try followUp
+      if (interaction.replied) {
+        try { return await interaction.followUp(payload); } catch (err) { /* fallthrough */ }
+      }
+      // Final fallback: try reply (will fail if already acked)
+      try { return await interaction.reply(payload); } catch (err) { /* fallthrough */ }
+    } else {
+      // For normal command interactions
+      if (!interaction.deferred && !interaction.replied) {
+        try { return await interaction.reply(payload); } catch (err) { /* fallthrough */ }
+      }
+      if (interaction.deferred) {
+        try { return await interaction.editReply(payload); } catch (err) { /* fallthrough */ }
+      }
+      if (interaction.replied) {
+        try { return await interaction.followUp(payload); } catch (err) { /* fallthrough */ }
+      }
     }
-    if (interaction.deferred) return await interaction.editReply(payload);
-    if (interaction.replied) return await interaction.followUp(payload);
-    return await interaction.reply(payload);
   } catch (err) {
-    console.error('safeRespond error:', err);
-    try { if (!interaction.replied) await interaction.followUp({ content: 'Failed to respond; interaction may have expired.', ephemeral: true }); } catch {}
+    // If we hit known errors (already acknowledged / unknown interaction), attempt safe fallbacks
+    const msg = err && err.message ? err.message : '';
+    // If interaction was acknowledged already, try editReply or followUp
+    try {
+      if (interaction.deferred || interaction.replied) {
+        return await interaction.editReply(payload);
+      }
+      // Last resort: followUp (works if initial reply happened)
+      return await interaction.followUp(payload);
+    } catch (err2) {
+      console.error('safeRespond final fallback failed:', err, err2);
+    }
   }
+  // If we reach here, just log and return null
+  console.warn('safeRespond: could not deliver response (interaction may be expired).');
+  return null;
 }
 
-// build simple select options list (no emojis)
+// (Helper functions follow — same as your original logic, unchanged)
 function buildSelectOptionsFrom(defs) {
   return defs.map(d => ({ label: d.label, value: d.key }));
 }
@@ -80,7 +123,6 @@ function computeMaskFromPayload(payloadKey) {
   return mask;
 }
 
-// helper: format enabled permissions (only show enabled ones, each prefixed with ✅)
 function formatEnabledPerms(mask) {
   const lines = [];
   for (const d of PERM_DEFS) {
@@ -92,11 +134,14 @@ function formatEnabledPerms(mask) {
   return lines.length ? lines.join('\n') : '—';
 }
 
+// Main exported interaction handler (keeps your flows)
 module.exports = async function interactionHandler(interaction, client) {
   try {
-    if (interaction.isButton && interaction.isButton()) {
+    // Handle Buttons
+    if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
 
+      // Role perms start
       if (id === 'rolep:init') {
         const embed = new EmbedBuilder().setTitle('Role Permission Editor').setDescription('Choose action: Add / Remove / Reset / Show').setColor(0x2b2d31);
         const row = new ActionRowBuilder().addComponents(
@@ -108,10 +153,12 @@ module.exports = async function interactionHandler(interaction, client) {
         return await safeRespond(interaction, { embeds: [embed], components: [row] });
       }
 
+      // Cancel
       if (id === 'common:cancel') {
         return await safeRespond(interaction, { content: 'Cancelled.', embeds: [], components: [] });
       }
 
+      // Undo
       if (id.startsWith('undo:')) {
         const undoId = id.split(':')[1];
         const entry = consumeUndo(undoId);
@@ -124,6 +171,7 @@ module.exports = async function interactionHandler(interaction, client) {
         }
       }
 
+      // role actions -> show role select
       if (id.startsWith('rolep:action:')) {
         const mode = id.split(':')[2];
         const embed = new EmbedBuilder().setTitle(`Select role — ${mode.toUpperCase()}`).setColor(0x2b2d31);
@@ -131,6 +179,7 @@ module.exports = async function interactionHandler(interaction, client) {
         return await safeRespond(interaction, { embeds: [embed], components: [row] });
       }
 
+      // role preview / confirm & channel preview / confirm handlers:
       if (id.startsWith('rolep:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
@@ -153,8 +202,7 @@ module.exports = async function interactionHandler(interaction, client) {
           .addFields(
             { name: 'Before (enabled)', value: beforeList, inline: false },
             { name: 'After (enabled)', value: afterList, inline: false }
-          )
-          .setColor(role.color || 0x2b2d31)
+          ).setColor(role.color || 0x2b2d31)
           .setFooter({ text: '✅ = enabled (only enabled perms shown). Click Confirm to apply. Undo available.' });
 
         const row = new ActionRowBuilder().addComponents(
@@ -186,6 +234,7 @@ module.exports = async function interactionHandler(interaction, client) {
           }, 45);
 
           try { fs.unlinkSync(tmp); } catch {}
+
           const embed = new EmbedBuilder().setTitle('Permissions Updated').setDescription(`Applied changes to ${role.name}`).setColor(0x00AA00);
           const undoRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`undo:${undoId}`).setLabel('Undo').setStyle(ButtonStyle.Secondary));
           return await safeRespond(interaction, { embeds: [embed], components: [undoRow] });
@@ -194,7 +243,7 @@ module.exports = async function interactionHandler(interaction, client) {
         }
       }
 
-      // Channel preview/confirm handling
+      // Channel preview/confirm
       if (id.startsWith('chanp:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
@@ -209,20 +258,14 @@ module.exports = async function interactionHandler(interaction, client) {
         const allow = BigInt(payload.allowMask || '0');
         const deny = BigInt(payload.denyMask || '0');
 
-        const beforeAllowList = formatEnabledPerms(beforeAllow);
-        const beforeDenyList = formatEnabledPerms(beforeDeny); // show enabled denies if any (rare)
-        const afterAllowList = formatEnabledPerms(allow);
-        const afterDenyList = formatEnabledPerms(deny);
-
         const embed = new EmbedBuilder()
           .setTitle(`Preview — Channel Overwrite — ${ch.name}`)
           .addFields(
-            { name: 'Before — Allowed (enabled)', value: beforeAllowList, inline: false },
-            { name: 'Before — Denied (enabled)', value: beforeDenyList, inline: false },
-            { name: 'After — Allowed (enabled)', value: afterAllowList, inline: false },
-            { name: 'After — Denied (enabled)', value: afterDenyList, inline: false }
-          )
-          .setColor(0x2b2d31)
+            { name: 'Before — Allowed (enabled)', value: formatEnabledPerms(beforeAllow), inline: false },
+            { name: 'Before — Denied (enabled)', value: formatEnabledPerms(beforeDeny), inline: false },
+            { name: 'After — Allowed (enabled)', value: formatEnabledPerms(allow), inline: false },
+            { name: 'After — Denied (enabled)', value: formatEnabledPerms(deny), inline: false }
+          ).setColor(0x2b2d31)
           .setFooter({ text: '✅ = enabled (only enabled perms shown). Click Confirm to apply.' });
 
         const row = new ActionRowBuilder().addComponents(
@@ -255,6 +298,7 @@ module.exports = async function interactionHandler(interaction, client) {
           }, 45);
 
           try { fs.unlinkSync(tmp); } catch {}
+
           const embed = new EmbedBuilder().setTitle('Channel Overwrite Applied').setDescription(`Applied overwrite on <#${ch.id}>`).setColor(0x00AA00);
           const undoRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`undo:${undoId}`).setLabel('Undo').setStyle(ButtonStyle.Secondary));
           return await safeRespond(interaction, { embeds: [embed], components: [undoRow] });
@@ -264,7 +308,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // ROLE SELECT
+    // Role select menu
     if (interaction.isRoleSelectMenu && interaction.isRoleSelectMenu()) {
       const cid = interaction.customId;
       if (cid.startsWith('rolep:select:')) {
@@ -296,7 +340,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // STRING SELECTS
+    // String select menus (permissions)
     if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
       const cid = interaction.customId;
       const parts = cid.split(':');
@@ -310,7 +354,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // CHANNEL SELECT
+    // Channel select menu
     if (interaction.isChannelSelectMenu && interaction.isChannelSelectMenu()) {
       const cid = interaction.customId;
       if (cid === 'chanp:select_channel') {
@@ -328,7 +372,41 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // chanp action buttons handled above inside button handler (addrole/view/etc.)
+    // chanp action buttons (view/addrole/addmember/change)
+    if (interaction.isMessageComponent && interaction.isMessageComponent()) {
+      const id = interaction.customId;
+      if (id.startsWith('chanp:action:')) {
+        const parts = id.split(':');
+        const action = parts[2];
+        const channelId = parts[3];
+        const ch = await interaction.guild.channels.fetch(channelId).catch(() => null);
+        if (!ch) return await safeRespond(interaction, { content: 'Channel not found', ephemeral: true });
+        if (action === 'view') {
+          const overwrites = ch.permissionOverwrites.cache.map(o => {
+            const allow = new PermissionsBitField(BigInt(o.allow?.bitfield || o.allow || 0n)).toArray().join(', ') || '—';
+            const deny = new PermissionsBitField(BigInt(o.deny?.bitfield || o.deny || 0n)).toArray().join(', ') || '—';
+            return `**${o.id}**\nAllow: ${allow}\nDeny: ${deny}`;
+          }).join('\n\n') || 'No overwrites';
+          const embed = new EmbedBuilder().setTitle(`Overwrites — ${ch.name}`).setDescription(overwrites).setColor(0x2b2d31);
+          return await safeRespond(interaction, { embeds: [embed], components: [] });
+        }
+        if (action === 'addrole') {
+          const row = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`chanp:select_role:addrole:${channelId}`).setPlaceholder('Select role to add overwrite'));
+          const embed = new EmbedBuilder().setTitle('Select Role').setDescription('Choose role to modify channel overwrite').setColor(0x2b2d31);
+          return await safeRespond(interaction, { embeds: [embed], components: [row] });
+        }
+        if (action === 'addmember') {
+          const row = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`chanp:select_role:addmember:${channelId}`).setPlaceholder('Select role (member support later)'));
+          const embed = new EmbedBuilder().setTitle('Select Role (member soon)').setDescription('Choose role to modify channel overwrite for now').setColor(0x2b2d31);
+          return await safeRespond(interaction, { embeds: [embed], components: [row] });
+        }
+        if (action === 'change') {
+          const row = new ActionRowBuilder().addComponents(new ChannelSelectMenuBuilder().setCustomId('chanp:select_channel').setPlaceholder('Select another channel'));
+          const embed = new EmbedBuilder().setTitle('Select Channel').setDescription('Choose another channel to configure').setColor(0x2b2d31);
+          return await safeRespond(interaction, { embeds: [embed], components: [row] });
+        }
+      }
+    }
 
   } catch (err) {
     console.error('interaction handler error:', err);
