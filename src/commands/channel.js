@@ -3,10 +3,20 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ChannelSelectMenuBu
 
 async function safeReply(interaction, payload) {
   try {
-    if (interaction.deferred) return await interaction.editReply(payload);
-    if (interaction.replied) return await interaction.followUp(payload);
-    return await interaction.reply(payload);
-  } catch (err) { console.error('safeReply failed:', err); }
+    if (!interaction.deferred && !interaction.replied) {
+      return await interaction.reply(payload);
+    }
+    if (interaction.deferred) {
+      return await interaction.editReply(payload);
+    }
+    if (interaction.replied) {
+      return await interaction.followUp(payload);
+    }
+  } catch (err) {
+    try { if (interaction.deferred || interaction.replied) return await interaction.editReply(payload); } catch {}
+    try { return await interaction.followUp(payload); } catch (e) { console.error('safeReply final fallback failed:', err, e); }
+  }
+  return null;
 }
 
 module.exports = {
