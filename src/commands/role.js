@@ -2,11 +2,23 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 async function safeReply(interaction, payload) {
+  // robust: handle both chat commands and component responses safely
   try {
-    if (interaction.deferred) return await interaction.editReply(payload);
-    if (interaction.replied) return await interaction.followUp(payload);
-    return await interaction.reply(payload);
-  } catch (err) { console.error('safeReply failed:', err); }
+    if (!interaction.deferred && !interaction.replied) {
+      return await interaction.reply(payload);
+    }
+    if (interaction.deferred) {
+      return await interaction.editReply(payload);
+    }
+    if (interaction.replied) {
+      return await interaction.followUp(payload);
+    }
+  } catch (err) {
+    // fallback: if already acknowledged, try editReply then followUp
+    try { if (interaction.deferred || interaction.replied) return await interaction.editReply(payload); } catch {}
+    try { return await interaction.followUp(payload); } catch (e) { console.error('safeReply final fallback failed:', err, e); }
+  }
+  return null;
 }
 
 module.exports = {
