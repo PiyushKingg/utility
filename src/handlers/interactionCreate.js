@@ -17,18 +17,19 @@ const path = require('path');
 const DATA_DIR = path.join(__dirname, '..', '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-// --- SAFE component response flow ---
-// Defer update, then edit the original message. If edit fails, fallback to sending a minimal message in channel.
+// Safe responder: try to deferUpdate() then edit original message; fallback to sending a channel message.
+// Returns true if we successfully delivered something; false otherwise.
 async function respondComponentByEditing(interaction, responsePayload) {
   try {
+    // Try to acknowledge the interaction quickly
     await interaction.deferUpdate().catch(() => null);
-    if (interaction.message) {
-      // edit original message (Discord will error on invalid components or duplicated IDs)
+    if (interaction.message && !interaction.message.deleted) {
+      // Edit original message
       await interaction.message.edit(responsePayload);
       return true;
     }
     if (interaction.channel) {
-      // fallback: send minimal (embeds/content only)
+      // Fallback: send minimal visible message
       const fallback = {};
       if (responsePayload.embeds) fallback.embeds = responsePayload.embeds;
       if (responsePayload.content) fallback.content = responsePayload.content;
@@ -42,26 +43,22 @@ async function respondComponentByEditing(interaction, responsePayload) {
   return false;
 }
 
-// --- helper to build select options from perms parts ---
-function buildOptions(arr) {
-  return arr.map(p => ({ label: p.label, value: p.key }));
-}
-
-// Build selects (2 or more if needed)
-function buildPermissionSelectRows(prefix, payloadKey, context = 'role') {
-  const parts = partsForContext(context); // returns array of arrays (each <=25)
+// Build permission select rows. Use a stable custom id format:
+// perm:sel:<payloadKey>:<index>:<context>
+function buildPermissionSelectRows(payloadKey, context = 'role') {
+  const parts = partsForContext(context); // array of arrays (<=25 entries each)
   const rows = [];
   for (let i = 0; i < parts.length; i++) {
     const idx = i + 1;
     const menu = new StringSelectMenuBuilder()
-      .setCustomId(`${prefix}:sel:${idx}:${payloadKey}`)
+      .setCustomId(`perm:sel:${payloadKey}:${idx}:${context}`)
       .setPlaceholder(`Permissions (${idx}/${parts.length})`)
-      .addOptions(buildOptions(parts[i]))
+      .addOptions(parts[i].map(p => ({ label: p.label, value: p.key })))
       .setMinValues(0)
       .setMaxValues(Math.min(25, parts[i].length));
     rows.push(new ActionRowBuilder().addComponents(menu));
   }
-  return rows; // array of ActionRowBuilder
+  return rows;
 }
 
 function persistSelections(payloadKey, selIndex, values) {
@@ -83,8 +80,8 @@ function computeMaskFromPayload(payloadKey) {
   if (data.all === true) return allFlagsForContext(context);
   const selections = data.selections || {};
   let mask = 0n;
-  for (const kIdx of Object.keys(selections)) {
-    for (const key of (selections[kIdx] || [])) mask |= nameToFlag(key, context);
+  for (const sIndex of Object.keys(selections)) {
+    for (const key of (selections[sIndex] || [])) mask |= nameToFlag(key, context);
   }
   return mask;
 }
@@ -93,17 +90,16 @@ function formatSelectedList(payloadKey, context = 'role') {
   const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
   if (!fs.existsSync(tmp)) return 'None selected';
   const data = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+  if (data.all) return 'All Permissions';
   const sel = data.selections || {};
   const items = [];
-  for (const idx of Object.keys(sel).sort()) {
+  for (const idx of Object.keys(sel).sort((a, b) => Number(a) - Number(b))) {
     for (const key of sel[idx]) {
-      // look up label
       const perms = permsForContext(context);
       const found = perms.find(p => p.key === key);
       if (found) items.push(found.label);
     }
   }
-  if (data.all) return 'All Permissions';
   return items.length ? items.map(x => `• ${x}`).join('\n') : 'None selected';
 }
 
@@ -117,14 +113,14 @@ function formatEnabledPerms(mask, context = 'role') {
   return lines.length ? lines.join('\n') : '—';
 }
 
-// bot checks
+// Bot capability checks
 function botCanManageRole(guild, role) {
   const me = guild.members.me;
   if (!me) return { ok: false, reason: 'Cannot fetch bot member.' };
   if (!me.permissions.has(PermissionsBitField.Flags.ManageRoles) && !me.permissions.has(PermissionsBitField.Flags.Administrator)) return { ok: false, reason: 'Bot missing Manage Roles/Administrator.' };
   const botRole = me.roles.highest;
   if (!botRole) return { ok: false, reason: 'Bot has no roles.' };
-  if (botRole.position <= role.position) return { ok: false, reason: `Bot role position (${botRole.position}) is not higher than target role (${role.position}).` };
+  if (role && botRole.position <= role.position) return { ok: false, reason: `Bot role position (${botRole.position}) is not higher than target role (${role.position}).` };
   return { ok: true };
 }
 function botCanManageChannel(guild, channel) {
@@ -136,12 +132,13 @@ function botCanManageChannel(guild, channel) {
 
 module.exports = async function interactionHandler(interaction, client) {
   try {
-    if (interaction.isMessageComponent() && interaction.isMessageComponent()) {
+    // Message component handling
+    if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
 
-      // Start role editor
+      // Init role editor (button flow)
       if (id === 'rolep:init') {
-        const embed = new EmbedBuilder().setTitle('Role Permission Editor').setDescription('Choose Add / Remove / Reset / Show').setColor(0x2b2d31);
+        const embed = new EmbedBuilder().setTitle('Role Permission Editor').setDescription('Choose what to do: Add / Remove / Reset / Show').setColor(0x2b2d31);
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('rolep:action:add').setLabel('Add').setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId('rolep:action:remove').setLabel('Remove').setStyle(ButtonStyle.Danger),
@@ -152,35 +149,7 @@ module.exports = async function interactionHandler(interaction, client) {
         return;
       }
 
-      // Cancel (unique per payload) handled below in preview rows (so not duplicated globally)
-
-      // All permissions (marks payload all)
-      if (id.startsWith('perm:all:')) {
-        const parts = id.split(':');
-        const payloadKey = parts[2];
-        const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        if (!fs.existsSync(tmp)) { await respondComponentByEditing(interaction, { content: 'Payload expired/missing.' }); return; }
-        const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
-        payload.all = true;
-        fs.writeFileSync(tmp, JSON.stringify(payload));
-        // update message listing selected perms
-        const listText = formatSelectedList(payloadKey, payload.context || 'role');
-        const embed = new EmbedBuilder().setTitle('Selected Permissions').setDescription(listText).setColor(0x2b2d31);
-        const confirmRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        await respondComponentByEditing(interaction, { embeds: [embed], components: [confirmRow] });
-        return;
-      }
-
-      // Undo
-      if (id.startsWith('undo:')) {
-        const undoId = id.split(':')[1];
-        const entry = consumeUndo(undoId);
-        if (!entry) { await respondComponentByEditing(interaction, { content: 'Undo expired or invalid.' }); return; }
-        try { await entry.applyUndoFn(entry.beforeState); await respondComponentByEditing(interaction, { content: 'Undo applied.' }); } catch (err) { console.error('undo failed', err); await respondComponentByEditing(interaction, { content: 'Undo failed.' }); }
-        return;
-      }
-
-      // Role action -> show role select
+      // role action -> show role dropdown
       if (id.startsWith('rolep:action:')) {
         const mode = id.split(':')[2];
         const embed = new EmbedBuilder().setTitle(`Select role — ${mode.toUpperCase()}`).setColor(0x2b2d31);
@@ -189,7 +158,36 @@ module.exports = async function interactionHandler(interaction, client) {
         return;
       }
 
-      // Preview (initial Confirm) -> show preview (before/after)
+      // perm all button (marks all)
+      if (id.startsWith('perm:all:')) {
+        // format: perm:all:<payloadKey>:<context>
+        const parts = id.split(':');
+        const payloadKey = parts[2];
+        const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
+        if (!fs.existsSync(tmp)) { await respondComponentByEditing(interaction, { content: 'Payload expired/missing.' }); return; }
+        const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
+        payload.all = true;
+        fs.writeFileSync(tmp, JSON.stringify(payload));
+        const listText = formatSelectedList(payloadKey, payload.context || 'role');
+        const embed = new EmbedBuilder().setTitle('Selected Permissions').setDescription(listText).setColor(0x2b2d31);
+        const confirmRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+        );
+        await respondComponentByEditing(interaction, { embeds: [embed], components: [confirmRow] });
+        return;
+      }
+
+      // Undo button
+      if (id.startsWith('undo:')) {
+        const undoId = id.split(':')[1];
+        const entry = consumeUndo(undoId);
+        if (!entry) { await respondComponentByEditing(interaction, { content: 'Undo expired or invalid.' }); return; }
+        try { await entry.applyUndoFn(entry.beforeState); await respondComponentByEditing(interaction, { content: 'Undo applied.' }); } catch (err) { console.error('undo failed', err); await respondComponentByEditing(interaction, { content: 'Undo failed.' }); }
+        return;
+      }
+
+      // Preview for role changes
       if (id.startsWith('rolep:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
@@ -198,8 +196,8 @@ module.exports = async function interactionHandler(interaction, client) {
         const role = await interaction.guild.roles.fetch(payload.roleId).catch(() => null);
         if (!role) { await respondComponentByEditing(interaction, { content: 'Role not found.' }); return; }
 
-        // compute masks
-        const beforeMask = BigInt(role.permissions.bitfield);
+        // safe read of beforeMask
+        const beforeMask = BigInt(role.permissions?.bitfield ?? 0n);
         const mask = computeMaskFromPayload(payloadKey);
         let afterMask = beforeMask;
         if (payload.mode === 'add') afterMask = beforeMask | mask;
@@ -213,7 +211,6 @@ module.exports = async function interactionHandler(interaction, client) {
             { name: 'After (enabled)', value: formatEnabledPerms(afterMask, 'role'), inline: false }
           ).setColor(role.color || 0x2b2d31);
 
-        // Actual Confirm to apply (second confirm)
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`rolep:confirm:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Success),
           new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
@@ -222,7 +219,7 @@ module.exports = async function interactionHandler(interaction, client) {
         return;
       }
 
-      // Apply confirm
+      // Apply role change
       if (id.startsWith('rolep:confirm:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
@@ -235,7 +232,7 @@ module.exports = async function interactionHandler(interaction, client) {
         if (!botCheck.ok) { await respondComponentByEditing(interaction, { content: `Cannot apply: ${botCheck.reason}` }); return; }
 
         try {
-          const before = BigInt(role.permissions.bitfield);
+          const before = BigInt(role.permissions?.bitfield ?? 0n);
           const mask = computeMaskFromPayload(payloadKey);
           let newMask = before;
           if (payload.mode === 'add') newMask = before | mask;
@@ -261,7 +258,7 @@ module.exports = async function interactionHandler(interaction, client) {
         return;
       }
 
-      // Channel preview & confirm follow same patterns: IDs start with chanp:...
+      // Channel preview & confirm
       if (id.startsWith('chanp:preview:')) {
         const payloadKey = id.split(':')[2];
         const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
@@ -271,8 +268,8 @@ module.exports = async function interactionHandler(interaction, client) {
         if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found.' }); return; }
 
         const existing = ch.permissionOverwrites.cache.get(payload.targetId);
-        const beforeAllow = BigInt(existing?.allow?.bitfield || existing?.allow || 0n);
-        const beforeDeny = BigInt(existing?.deny?.bitfield || existing?.deny || 0n);
+        const beforeAllow = BigInt(existing?.allow?.bitfield ?? 0n);
+        const beforeDeny = BigInt(existing?.deny?.bitfield ?? 0n);
         const allow = BigInt(payload.allowMask || '0');
         const deny = BigInt(payload.denyMask || '0');
 
@@ -306,8 +303,8 @@ module.exports = async function interactionHandler(interaction, client) {
 
         try {
           const existing = ch.permissionOverwrites.cache.get(payload.targetId);
-          const beforeAllow = BigInt(existing?.allow?.bitfield || existing?.allow || 0n);
-          const beforeDeny = BigInt(existing?.deny?.bitfield || existing?.deny || 0n);
+          const beforeAllow = BigInt(existing?.allow?.bitfield ?? 0n);
+          const beforeDeny = BigInt(existing?.deny?.bitfield ?? 0n);
           const allow = BigInt(payload.allowMask || '0');
           const deny = BigInt(payload.denyMask || '0');
 
@@ -332,7 +329,7 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // Role select (user chose role) => show permission selects (2 or more), show current selections live.
+    // Role select menu (user selected a role after clicking Add/Remove)
     if (interaction.isRoleSelectMenu && interaction.isRoleSelectMenu()) {
       const cid = interaction.customId;
       if (cid.startsWith('rolep:select:')) {
@@ -343,16 +340,24 @@ module.exports = async function interactionHandler(interaction, client) {
         const payload = { mode, roleId, selections: {}, context: 'role' };
         fs.writeFileSync(tmp, JSON.stringify(payload));
 
-        const rows = buildPermissionSelectRows(`rolep:${mode}:${roleId}`, payloadKey, 'role');
-        // Add All Permissions button and a Confirm (initial) + Cancel in preview row
+        // Build permission rows
+        const rows = buildPermissionSelectRows(payloadKey, 'role');
+        // All permissions button row
         const allRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`perm:all:${payloadKey}:role`).setLabel('All Permissions').setStyle(ButtonStyle.Secondary));
-        const confirmRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        const embed = new EmbedBuilder().setTitle(`Permissions — ${mode.toUpperCase()}`).setDescription('Select permissions from the lists below. Your selections will update the message. When ready click Confirm to preview.').setColor(0x2b2d31);
-        await respondComponentByEditing(interaction, { embeds: [embed], components: [allRow, ...rows, confirmRow] });
+        // Confirm + Cancel
+        const confirmRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
+        );
+
+        const embed = new EmbedBuilder().setTitle(`Permissions — ${mode.toUpperCase()}`).setDescription('Select permissions. Selections update live in the message. When ready click Confirm to preview.').setColor(0x2b2d31);
+        // Compose final components array: allRow, permission select rows..., confirmRow
+        const components = [allRow, ...rows, confirmRow];
+        await respondComponentByEditing(interaction, { embeds: [embed], components });
         return;
       }
 
-      // Channel perms role select (for add role overwrite)
+      // Channel permission role selection (add role overwrite)
       if (cid.startsWith('chanp:select_role:')) {
         const parts = cid.split(':');
         const action = parts[2];
@@ -363,47 +368,50 @@ module.exports = async function interactionHandler(interaction, client) {
         const payload = { channelId, targetId: roleId, action, selections: {}, context: 'channel' };
         fs.writeFileSync(tmp, JSON.stringify(payload));
 
-        const rows = buildPermissionSelectRows(`chanp:${channelId}:${roleId}`, payloadKey, 'channel');
+        const rows = buildPermissionSelectRows(payloadKey, 'channel');
         const allRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`perm:all:${payloadKey}:channel`).setLabel('All Permissions').setStyle(ButtonStyle.Secondary));
         const confirmRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`chanp:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
         const embed = new EmbedBuilder().setTitle('Channel Permissions').setDescription('Select permissions and click Confirm to preview.').setColor(0x2b2d31);
-        await respondComponentByEditing(interaction, { embeds: [embed], components: [allRow, ...rows, confirmRow] });
+        const components = [allRow, ...rows, confirmRow];
+        await respondComponentByEditing(interaction, { embeds: [embed], components });
         return;
       }
     }
 
-    // Permission selects (string select) — update selected list live
+    // Permission select menu (string select) handling
     if (interaction.isStringSelectMenu && interaction.isStringSelectMenu()) {
       const cid = interaction.customId;
-      // format: <prefix>:sel:<index>:<payloadKey>
+      // Expect format: perm:sel:<payloadKey>:<index>:<context>
       const parts = cid.split(':');
-      if (parts.length >= 4 && parts[1] === 'sel') {
-        const selIndex = parts[2]; // '1','2',...
-        const payloadKey = parts[3];
+      if (parts[0] === 'perm' && parts[1] === 'sel' && parts.length >= 5) {
+        const payloadKey = parts[2];
+        const selIndex = parts[3];
+        const context = parts[4];
+        // persist current selections
         persistSelections(payloadKey, selIndex, interaction.values);
-        // Build selected list and edit message to show current selections
-        const tmp = path.join(DATA_DIR, `${payloadKey}.json`);
-        if (!fs.existsSync(tmp)) {
-          await respondComponentByEditing(interaction, { content: 'Payload expired/missing.' });
-          return;
-        }
-        const payload = JSON.parse(fs.readFileSync(tmp, 'utf8'));
-        const listText = formatSelectedList(payloadKey, payload.context || 'role');
+
+        // Rebuild permission select rows (so the selects remain available) and the All/Confirm rows
+        const rows = buildPermissionSelectRows(payloadKey, context);
+        const allRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`perm:all:${payloadKey}:${context}`).setLabel('All Permissions').setStyle(ButtonStyle.Secondary));
+        const previewRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(context === 'role' ? `rolep:preview:${payloadKey}` : `chanp:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
+
+        const listText = formatSelectedList(payloadKey, context);
         const embed = new EmbedBuilder().setTitle('Selected Permissions').setDescription(listText).setColor(0x2b2d31);
-        const previewRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`rolep:preview:${payloadKey}`).setLabel('Confirm').setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`common:cancel:${payloadKey}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary));
-        await respondComponentByEditing(interaction, { embeds: [embed], components: [previewRow] });
+        const components = [allRow, ...rows, previewRow];
+
+        await respondComponentByEditing(interaction, { embeds: [embed], components });
         return;
       }
     }
 
-    // Channel select menu (choose channel to edit)
+    // Channel select menu: choose channel to configure
     if (interaction.isChannelSelectMenu && interaction.isChannelSelectMenu()) {
       const cid = interaction.customId;
       if (cid === 'chanp:select_channel') {
         const channelId = interaction.values[0];
         const ch = await interaction.guild.channels.fetch(channelId).catch(() => null);
         if (!ch) { await respondComponentByEditing(interaction, { content: 'Channel not found.' }); return; }
-        const embed = new EmbedBuilder().setTitle(`Configure Channel: ${ch.name}`).setDescription('Choose action').setColor(0x2b2d31);
+        const embed = new EmbedBuilder().setTitle(`Configure Channel: ${ch.name}`).setDescription('Choose an action').setColor(0x2b2d31);
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId(`chanp:action:addrole:${channelId}`).setLabel('Add Role Overwrite').setStyle(ButtonStyle.Primary),
           new ButtonBuilder().setCustomId(`chanp:action:addmember:${channelId}`).setLabel('Add Member Overwrite').setStyle(ButtonStyle.Primary),
@@ -415,8 +423,8 @@ module.exports = async function interactionHandler(interaction, client) {
       }
     }
 
-    // chanp action handlers (addrole/view/etc.)
-    if (interaction.isMessageComponent() && interaction.isMessageComponent()) {
+    // chanp action buttons
+    if (interaction.isMessageComponent && interaction.isMessageComponent()) {
       const id = interaction.customId;
       if (id.startsWith('chanp:action:')) {
         const parts = id.split(':');
@@ -427,8 +435,10 @@ module.exports = async function interactionHandler(interaction, client) {
 
         if (action === 'view') {
           const overwrites = ch.permissionOverwrites.cache.map(o => {
-            const allow = new PermissionsBitField(BigInt(o.allow?.bitfield || o.allow || 0n)).toArray().join(', ') || '—';
-            const deny = new PermissionsBitField(BigInt(o.deny?.bitfield || o.deny || 0n)).toArray().join(', ') || '—';
+            const allowMask = BigInt(o.allow?.bitfield ?? 0n);
+            const denyMask = BigInt(o.deny?.bitfield ?? 0n);
+            const allow = formatEnabledPerms(allowMask, 'channel');
+            const deny = formatEnabledPerms(denyMask, 'channel');
             return `**${o.id}**\nAllow: ${allow}\nDeny: ${deny}`;
           }).join('\n\n') || 'No overwrites';
           const embed = new EmbedBuilder().setTitle(`Overwrites — ${ch.name}`).setDescription(overwrites).setColor(0x2b2d31);
@@ -444,7 +454,7 @@ module.exports = async function interactionHandler(interaction, client) {
         }
 
         if (action === 'addmember') {
-          const row = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`chanp:select_role:addmember:${channelId}`).setPlaceholder('Select role (member support later)'));
+          const row = new ActionRowBuilder().addComponents(new RoleSelectMenuBuilder().setCustomId(`chanp:select_role:addmember:${channelId}`).setPlaceholder('Select role (member soon)'));
           const embed = new EmbedBuilder().setTitle('Select Role (member soon)').setDescription('Temporary role select; member selection will be added later').setColor(0x2b2d31);
           await respondComponentByEditing(interaction, { embeds: [embed], components: [row] });
           return;
