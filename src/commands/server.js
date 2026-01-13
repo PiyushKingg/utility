@@ -1,5 +1,5 @@
 // src/commands/server.js
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const fetch = require('node-fetch');
@@ -40,12 +40,12 @@ module.exports = {
     .setName('server')
     .setDescription('Server utilities')
     .addSubcommand(s => s.setName('info').setDescription('Show server information'))
-    .addSubcommand(s => s.setName('edit').setDescription('Edit server name/icon/description')
+    .addSubcommand(s => s.setName('edit').setDescription('Edit server name/icon/description/timezone/language')
       .addStringOption(o => o.setName('name').setDescription('New server name').setRequired(false))
       .addStringOption(o => o.setName('description').setDescription('New server description').setRequired(false))
       .addStringOption(o => o.setName('icon_url').setDescription('URL for new server icon').setRequired(false))
-      .addStringOption(o => o.setName('timezone').setDescription('Server timezone string (for display)').setRequired(false))
-      .addStringOption(o => o.setName('language').setDescription('Server language code').setRequired(false))
+      .addStringOption(o => o.setName('timezone').setDescription('Display timezone').setRequired(false))
+      .addStringOption(o => o.setName('language').setDescription('Display language').setRequired(false))
     ),
 
   async execute(interaction) {
@@ -65,15 +65,12 @@ module.exports = {
           { name: 'Boosts', value: `${boosts}`, inline: true },
           { name: 'Created', value: created, inline: true }
         ).setColor(0x2b2d31);
-
-      await safeReply(interaction, { embeds: [embed] });
-      return;
+      return safeReply(interaction, { embeds: [embed] });
     }
 
     if (sub === 'edit') {
-      if (!interaction.member.permissions.has('ManageGuild')) {
-        await safeReply(interaction, { content: 'You need Manage Server permission to edit server.', ephemeral: true });
-        return;
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+        return safeReply(interaction, { content: 'You need Manage Server permission to edit server.', ephemeral: true });
       }
       const name = interaction.options.getString('name');
       const desc = interaction.options.getString('description');
@@ -91,18 +88,18 @@ module.exports = {
           await interaction.guild.setIcon(buf);
         }
       } catch (err) {
-        await safeReply(interaction, { content: 'Failed to edit server: ' + (err.message || err), ephemeral: true });
-        return;
+        console.error('server edit error:', err);
+        return safeReply(interaction, { content: 'Failed to edit server: ' + (err.message || err), ephemeral: true });
       }
 
+      // persist cfg
       const cfg = readGuildConfig(interaction.guild.id);
       if (tz) cfg.timezone = tz;
       if (lang) cfg.language = lang;
       writeGuildConfig(interaction.guild.id, cfg);
 
       const embed = new EmbedBuilder().setTitle('Server Updated').setDescription('Server updated successfully.').setColor(0x00AA00);
-      await safeReply(interaction, { embeds: [embed] });
-      return;
+      return safeReply(interaction, { embeds: [embed] });
     }
   }
 };
